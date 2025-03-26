@@ -6,10 +6,21 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Sanet.Transport.Rx</RootNamespace>
     <AssemblyName>Sanet.Transport.Rx</AssemblyName>
+    
+    <!-- NuGet package properties -->
+    <PackageId>Sanet.Transport.Rx</PackageId>
+    <Version>0.2.0</Version>
+    <Authors>Anton Makarevich</Authors>
+    <Company>Sanet</Company>
+    <Description>Reactive Extensions implementation of the Sanet.Transport abstractions</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/anton-makarevich/Sanet.Transport</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/anton-makarevich/Sanet.Transport</RepositoryUrl>
+    <PackageTags>transport;messaging;reactive;rx</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.Reactive" Version="6.0.0" />
+    <PackageReference Include="System.Reactive" Version="6.0.1" />
   </ItemGroup>
 
   <ItemGroup>
