@@ -30,7 +30,8 @@ jobs:
       - name: Upload test results
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-        run: bash <(curl -s https://codecov.io/bash) -f "tests/Sanet.Transport.Rx.Tests/coverage.opencover.xml" -f "tests/Sanet.Transport.Channel.Tests/coverage.opencover.xml"
+        run: bash <(curl -s https://codecov.io/bash) -f "tests/Sanet.Transport.Rx.Tests/coverage.opencover.xml" -f "tests/Sanet.Transport.Channel.Tests/coverage.opencover.xml" -t "$CODECOV_TOKEN"
+  
   
   publish-nuget:
     runs-on: ubuntu-latest
