@@ -1,0 +1,60 @@
+name: Sanet Transport Libraries
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+  workflow_dispatch:
+env:
+  NuGetDirectory: ${{ github.workspace}}/nuget
+  
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: 9.x
+
+      - name: Run Rx Tests
+        run: dotnet test tests/Sanet.Transport.Rx.Tests/Sanet.Transport.Rx.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport]*
+
+      - name: Run Channel Tests
+        run: dotnet test tests/Sanet.Transport.Channel.Tests/Sanet.Transport.Channel.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport]*
+
+      - name: Upload test results
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: bash <(curl -s https://codecov.io/bash) -f "tests/Sanet.Transport.Rx.Tests/coverage.opencover.xml" -f "tests/Sanet.Transport.Channel.Tests/coverage.opencover.xml"
+  
+  publish-nuget:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '9.x'
+
+      - name: Create nuget packages
+        run: |
+          dotnet pack src/Sanet.Transport/Sanet.Transport.csproj --configuration Release --output ${{ env.NuGetDirectory }}
+          dotnet pack src/Sanet.Transport.Rx/Sanet.Transport.Rx.csproj --configuration Release --output ${{ env.NuGetDirectory }}
+          dotnet pack src/Sanet.Transport.Channel/Sanet.Transport.Channel.csproj --configuration Release --output ${{ env.NuGetDirectory }}
+
+      - name: Publish NuGet packages
+        env:
+          NUGET_APIKEY: ${{ secrets.NUGET_APIKEY }}
+        run: |
+          for file in "${{ env.NuGetDirectory }}"/*.nupkg; do
+            dotnet nuget push "$file" --api-key "$NUGET_APIKEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+          done

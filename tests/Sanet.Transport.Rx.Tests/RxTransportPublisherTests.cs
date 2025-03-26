@@ -5,7 +5,7 @@ using System;
 using System.Threading.Tasks;
 using Xunit;
 
-namespace Sanet.Transport.Tests.Rx;
+namespace Sanet.Transport.Rx.Tests;
 
 public class RxTransportPublisherTests
 {

@@ -6,6 +6,17 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Sanet.Transport</RootNamespace>
     <AssemblyName>Sanet.Transport</AssemblyName>
+    
+    <!-- NuGet package properties -->
+    <PackageId>Sanet.Transport</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Anton Makarevich</Authors>
+    <Company>Sanet</Company>
+    <Description>Core transport abstractions for message-based communication</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/anton-makarevich/Sanet.Transport</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/anton-makarevich/Sanet.Transport</RepositoryUrl>
+    <PackageTags>transport;messaging</PackageTags>
   </PropertyGroup>
 
 </Project>
