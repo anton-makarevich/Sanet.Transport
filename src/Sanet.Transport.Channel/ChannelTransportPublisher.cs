@@ -11,6 +11,7 @@ public class ChannelTransportPublisher : ITransportPublisher, IDisposable
     private readonly List<Action<TransportMessage>> _subscribers = [];
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _processingTask;
+    private bool _isDisposed;
     
     /// <summary>
     /// Creates a new instance of ChannelTransportPublisher
@@ -39,13 +40,23 @@ public class ChannelTransportPublisher : ITransportPublisher, IDisposable
     /// <returns>A task representing the asynchronous operation</returns>
     public async Task PublishMessage(TransportMessage message)
     {
+        // If the publisher has been disposed, return a completed task
+        if (_isDisposed)
+        {
+            return;
+        }
+        
         try
         {
             await _channel.Writer.WriteAsync(message, _cts.Token);
         }
         catch (OperationCanceledException)
         {
-            // Channel has been closed
+            // Channel has been closed or cancellation requested
+        }
+        catch (ObjectDisposedException)
+        {
+            // CancellationTokenSource has been disposed
         }
     }
     
@@ -55,6 +66,11 @@ public class ChannelTransportPublisher : ITransportPublisher, IDisposable
     /// <param name="onMessageReceived">Action to call when a message is received</param>
     public void Subscribe(Action<TransportMessage> onMessageReceived)
     {
+        if (_isDisposed)
+        {
+            throw new ObjectDisposedException(nameof(ChannelTransportPublisher));
+        }
+        
         lock (_subscribers)
         {
             _subscribers.Add(onMessageReceived);
@@ -106,6 +122,13 @@ public class ChannelTransportPublisher : ITransportPublisher, IDisposable
     /// </summary>
     public void Dispose()
     {
+        if (_isDisposed)
+        {
+            return;
+        }
+        
+        _isDisposed = true;
+        
         // Request cancellation
         _cts.Cancel();
         

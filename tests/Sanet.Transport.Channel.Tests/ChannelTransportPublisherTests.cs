@@ -7,7 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 
-namespace Sanet.Transport.Tests.Channel;
+namespace Sanet.Transport.Channel.Tests;
 
 public class ChannelTransportPublisherTests
 {
