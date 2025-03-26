@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Sanet.Transport.Channel</RootNamespace>
+    <AssemblyName>Sanet.Transport.Channel</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sanet.Transport\Sanet.Transport.csproj" />
+  </ItemGroup>
+
+</Project>
