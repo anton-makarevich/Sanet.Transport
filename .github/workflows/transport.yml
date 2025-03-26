@@ -21,13 +21,16 @@ jobs:
         with:
           dotnet-version: 9.x
 
-      - name: Run Transport tests
-        run: dotnet test tests/Sanet.Transport.Rx.Tests/Sanet.Transport.Rx.Tests.csproj tests/Sanet.Transport.Channel.Tests/Sanet.Transport.Channel.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport]*
+      - name: Run Rx Tests
+        run: dotnet test tests/Sanet.Transport.Rx.Tests/Sanet.Transport.Rx.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport]*
+
+      - name: Run Channel Tests
+        run: dotnet test tests/Sanet.Transport.Channel.Tests/Sanet.Transport.Channel.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport]*
 
       - name: Upload test results
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-        run: bash <(curl -s https://codecov.io/bash) -f "tests/Sanet.Transport.Rx.Tests/coverage.opencover.xml" -f "tests/Sanet.Transport.Channel.Tests/coverage.opencover.xml" -t $CODECOV_TOKEN
+        run: bash <(curl -s https://codecov.io/bash) -f "tests/Sanet.Transport.Rx.Tests/coverage.opencover.xml" -f "tests/Sanet.Transport.Channel.Tests/coverage.opencover.xml"
   
   publish-nuget:
     runs-on: ubuntu-latest
