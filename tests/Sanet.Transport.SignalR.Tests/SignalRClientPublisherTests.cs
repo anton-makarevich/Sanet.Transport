@@ -9,7 +9,7 @@ namespace Sanet.Transport.SignalR.Tests;
 public class SignalRClientPublisherTests
 {
     [Fact]
-    public async Task PublishMessage_SendsMessageToHub()
+    public void PublishMessage_CreatesPublisher()
     {
         // This test requires mocking HubConnection which is challenging
         // In a real implementation, we would use integration tests with a real hub
@@ -27,7 +27,7 @@ public class SignalRClientPublisherTests
     {
         // Arrange & Act & Assert
         Assert.Throws<ArgumentException>(() => new SignalRClientPublisher(string.Empty));
-        Assert.Throws<ArgumentException>(() => new SignalRClientPublisher(null));
+        Assert.Throws<ArgumentException>(() => new SignalRClientPublisher(null!));
     }
     
     [Fact]
