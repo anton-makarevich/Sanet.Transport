@@ -27,10 +27,13 @@ jobs:
       - name: Run Channel Tests
         run: dotnet test tests/Sanet.Transport.Channel.Tests/Sanet.Transport.Channel.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport]*
 
+      - name: Run SignalR Server Tests
+        run: dotnet test tests/Sanet.Transport.SignalR.Tests/Sanet.Transport.SignalR.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport.SignalR.SignalRServerPublisher]* /p:Exclude=[Sanet.Transport.SignalR.SignalRClientPublisher]*
+
       - name: Upload test results
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-        run: bash <(curl -s https://codecov.io/bash) -f "tests/Sanet.Transport.Rx.Tests/coverage.opencover.xml" -f "tests/Sanet.Transport.Channel.Tests/coverage.opencover.xml" -t "$CODECOV_TOKEN"
+        run: bash <(curl -s https://codecov.io/bash) -f "tests/Sanet.Transport.Rx.Tests/coverage.opencover.xml" -f "tests/Sanet.Transport.Channel.Tests/coverage.opencover.xml" -f "tests/Sanet.Transport.SignalR.Tests/coverage.opencover.xml" -t "$CODECOV_TOKEN"
   
   
   publish-nuget:
@@ -51,6 +54,7 @@ jobs:
           dotnet pack src/Sanet.Transport/Sanet.Transport.csproj --configuration Release --output ${{ env.NuGetDirectory }}
           dotnet pack src/Sanet.Transport.Rx/Sanet.Transport.Rx.csproj --configuration Release --output ${{ env.NuGetDirectory }}
           dotnet pack src/Sanet.Transport.Channel/Sanet.Transport.Channel.csproj --configuration Release --output ${{ env.NuGetDirectory }}
+          dotnet pack src/Sanet.Transport.SignalR/Sanet.Transport.SignalR.csproj --configuration Release --output ${{ env.NuGetDirectory }}
 
       - name: Publish NuGet packages
         env:
