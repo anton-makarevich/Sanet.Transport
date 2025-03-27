@@ -10,7 +10,7 @@ public class TransportHub : Hub
     /// <summary>
     /// Event that fires when a message is received from a client
     /// </summary>
-    public static event Action<TransportMessage>? OnMessageReceived;
+    internal static event Action<TransportMessage>? OnMessageReceived;
     
     /// <summary>
     /// Receives a message from a client and broadcasts it to all connected clients
@@ -24,5 +24,13 @@ public class TransportHub : Hub
         
         // Broadcast the message to all connected clients
         await Clients.All.SendAsync("ReceiveMessage", message);
+    }
+    
+    /// <summary>
+    /// For testing purposes only - allows tests to simulate a message received event
+    /// </summary>
+    internal static void SimulateMessageReceived(TransportMessage message)
+    {
+        OnMessageReceived?.Invoke(message);
     }
 }

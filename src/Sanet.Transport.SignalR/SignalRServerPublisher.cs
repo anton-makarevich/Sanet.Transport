@@ -3,19 +3,19 @@ using Microsoft.AspNetCore.SignalR;
 namespace Sanet.Transport.SignalR;
 
 /// <summary>
-/// Implementation of ITransportPublisher using SignalR
+/// Server-side implementation of ITransportPublisher using SignalR
 /// </summary>
-public class SignalRTransportPublisher : ITransportPublisher, IDisposable
+public class SignalRServerPublisher : ITransportPublisher, IDisposable
 {
     private readonly IHubContext<TransportHub> _hubContext;
-    private readonly List<Action<TransportMessage>> _subscribers = [];
+    private readonly List<Action<TransportMessage>> _subscribers = new List<Action<TransportMessage>>();
     private bool _isDisposed;
 
     /// <summary>
-    /// Creates a new instance of SignalRTransportPublisher
+    /// Creates a new instance of SignalRServerPublisher
     /// </summary>
     /// <param name="hubContext">The SignalR hub context</param>
-    public SignalRTransportPublisher(IHubContext<TransportHub> hubContext)
+    public SignalRServerPublisher(IHubContext<TransportHub> hubContext)
     {
         _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
         
@@ -58,7 +58,7 @@ public class SignalRTransportPublisher : ITransportPublisher, IDisposable
     {
         if (_isDisposed)
         {
-            throw new ObjectDisposedException(nameof(SignalRTransportPublisher));
+            throw new ObjectDisposedException(nameof(SignalRServerPublisher));
         }
         
         lock (_subscribers)
