@@ -32,4 +32,10 @@
     </AssemblyAttribute>
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Publishers\" />
+    <Folder Include="Infrastructure\" />
+    <Folder Include="Discovery\" />
+  </ItemGroup>
+
 </Project>
