@@ -9,7 +9,7 @@ public record TransportMessage
     /// <summary>
     /// The type identifier of the command
     /// </summary>
-    public required string CommandType { get; init; }
+    public required string MessageType { get; init; }
     
     /// <summary>
     /// The game origin identifier
