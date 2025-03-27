@@ -6,10 +6,10 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Sanet.Transport.Channel</RootNamespace>
     <AssemblyName>Sanet.Transport.Channel</AssemblyName>
+    <Version>1.0.1</Version>
     
     <!-- NuGet package properties -->
     <PackageId>Sanet.Transport.Channel</PackageId>
-    <Version>1.0.0</Version>
     <Authors>Anton Makarevich</Authors>
     <Company>Anton Makarevich</Company>
     <Description>System.Threading.Channels implementation of the Sanet.Transport abstractions</Description>
@@ -20,7 +20,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Sanet.Transport\Sanet.Transport.csproj" />
+    <PackageReference Include="Sanet.Transport" Version="1.0.1" />
   </ItemGroup>
 
 </Project>

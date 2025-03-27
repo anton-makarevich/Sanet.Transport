@@ -88,7 +88,7 @@ public class SignalRServerPublisherTests
         };
         
         // Act
-        for (int i = 0; i < subscriberCount; i++)
+        for (var i = 0; i < subscriberCount; i++)
         {
             publisher.Subscribe(msg =>
             {
