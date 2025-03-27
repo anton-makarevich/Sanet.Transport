@@ -13,7 +13,7 @@ public class ChannelTransportPublisherTests
         var receivedMessage = false;
         var testMessage = new TransportMessage
         {
-            CommandType = "TestCommand",
+            MessageType = "TestCommand",
             SourceId = Guid.NewGuid(),
             Payload = "{}",
             Timestamp = DateTime.UtcNow
@@ -42,7 +42,7 @@ public class ChannelTransportPublisherTests
         var receivedCount = 0;
         var testMessage = new TransportMessage
         {
-            CommandType = "TestCommand",
+            MessageType = "TestCommand",
             SourceId = Guid.NewGuid(),
             Payload = "{}",
             Timestamp = DateTime.UtcNow
@@ -78,7 +78,7 @@ public class ChannelTransportPublisherTests
         {
             messages.Add(new TransportMessage
             {
-                CommandType = $"TestCommand{i}",
+                MessageType = $"TestCommand{i}",
                 SourceId = Guid.NewGuid(),
                 Payload = $"{{\"index\": {i}}}",
                 Timestamp = DateTime.UtcNow
@@ -114,7 +114,7 @@ public class ChannelTransportPublisherTests
         // Act - publish a message and verify it's received
         await publisher.PublishMessage(new TransportMessage
         {
-            CommandType = "TestCommand",
+            MessageType = "TestCommand",
             SourceId = Guid.NewGuid(),
             Payload = "{}",
             Timestamp = DateTime.UtcNow
@@ -129,7 +129,7 @@ public class ChannelTransportPublisherTests
         // Publish another message after disposal
         await publisher.PublishMessage(new TransportMessage
         {
-            CommandType = "TestCommand2",
+            MessageType = "TestCommand2",
             SourceId = Guid.NewGuid(),
             Payload = "{}",
             Timestamp = DateTime.UtcNow
@@ -155,7 +155,7 @@ public class ChannelTransportPublisherTests
         {
             await publisher.PublishMessage(new TransportMessage
             {
-                CommandType = $"TestCommand{i}",
+                MessageType = $"TestCommand{i}",
                 SourceId = Guid.NewGuid(),
                 Payload = $"{{\"index\": {i}}}",
                 Timestamp = DateTime.UtcNow

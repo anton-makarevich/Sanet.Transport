@@ -13,7 +13,7 @@ public class RxTransportPublisherTests
         var receivedMessage = false;
         var testMessage = new TransportMessage
         {
-            CommandType = "TestCommand",
+            MessageType = "TestCommand",
             SourceId = Guid.NewGuid(),
             Payload = "{}",
             Timestamp = DateTime.UtcNow
@@ -41,7 +41,7 @@ public class RxTransportPublisherTests
         var receivedCount = 0;
         var testMessage = new TransportMessage
         {
-            CommandType = "TestCommand",
+            MessageType = "TestCommand",
             SourceId = Guid.NewGuid(),
             Payload = "{}",
             Timestamp = DateTime.UtcNow
