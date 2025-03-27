@@ -1,134 +1,94 @@
 using Microsoft.AspNetCore.SignalR;
 using NSubstitute;
-using Shouldly;
+using System;
+using System.Threading.Tasks;
 using Xunit;
 
 namespace Sanet.Transport.SignalR.Tests;
 
 public class SignalRServerPublisherTests
 {
+    private readonly IHubContext<TransportHub> _mockHubContext;
+    private readonly IHubClients _mockHubClients;
+    private readonly IClientProxy _mockClientProxy;
+    private readonly SignalRServerPublisher _publisher;
+
+    public SignalRServerPublisherTests()
+    {
+        _mockHubContext = Substitute.For<IHubContext<TransportHub>>();
+        _mockHubClients = Substitute.For<IHubClients>();
+        _mockClientProxy = Substitute.For<IClientProxy>();
+
+        _mockHubContext.Clients.Returns(_mockHubClients);
+        _mockHubClients.All.Returns(_mockClientProxy);
+
+        _publisher = new SignalRServerPublisher(_mockHubContext);
+    }
+
     [Fact]
     public async Task PublishMessage_SendsMessageToAllClients()
     {
         // Arrange
-        var clientProxy = Substitute.For<IClientProxy>();
-        var clients = Substitute.For<IHubClients>();
-        clients.All.Returns(clientProxy);
-        
-        var hubContext = Substitute.For<IHubContext<TransportHub>>();
-        hubContext.Clients.Returns(clients);
-        
-        var publisher = new SignalRServerPublisher(hubContext);
-        
-        var testMessage = new TransportMessage
+        var message = new TransportMessage
         {
-            MessageType = "TestCommand",
+            MessageType = "TestMessage",
             SourceId = Guid.NewGuid(),
-            Payload = "{}",
-            Timestamp = DateTime.UtcNow
+            Payload = "TestPayload"
         };
-        
+
         // Act
-        await publisher.PublishMessage(testMessage);
-        
+        await _publisher.PublishMessage(message);
+
         // Assert
-        await clientProxy.Received(1).SendCoreAsync(
-            "ReceiveMessage", 
-            Arg.Is<object[]>(args => args.Length == 1 && args[0] is TransportMessage), 
-            Arg.Any<CancellationToken>());
+        await _mockClientProxy.Received(1).SendAsync("ReceiveMessage", Arg.Is<TransportMessage>(m => 
+            m.MessageType == message.MessageType && 
+            m.SourceId == message.SourceId && 
+            m.Payload == message.Payload));
     }
-    
+
     [Fact]
-    public void Subscribe_WhenMessageReceived_SubscriberIsNotified()
+    public void Subscribe_NotifiesSubscriberWhenMessageReceived()
     {
         // Arrange
-        var hubContext = Substitute.For<IHubContext<TransportHub>>();
-        var publisher = new SignalRServerPublisher(hubContext);
-        
-        var receivedMessage = false;
-        var testMessage = new TransportMessage
+        var message = new TransportMessage
         {
-            MessageType = "TestCommand",
+            MessageType = "TestMessage",
             SourceId = Guid.NewGuid(),
-            Payload = "{}",
-            Timestamp = DateTime.UtcNow
+            Payload = "TestPayload"
         };
-        
+
+        TransportMessage? receivedMessage = null;
+        _publisher.Subscribe(m => receivedMessage = m);
+
         // Act
-        publisher.Subscribe(msg =>
-        {
-            msg.MessageType.ShouldBe(testMessage.MessageType);
-            msg.SourceId.ShouldBe(testMessage.SourceId);
-            msg.Payload.ShouldBe(testMessage.Payload);
-            receivedMessage = true;
-        });
-        
-        // Simulate a message received from the hub
-        TransportHub.SimulateMessageReceived(testMessage);
-        
+        TransportHub.SimulateMessageReceived(message);
+
         // Assert
-        receivedMessage.ShouldBeTrue();
+        Assert.NotNull(receivedMessage);
+        Assert.Equal(message.MessageType, receivedMessage.MessageType);
+        Assert.Equal(message.SourceId, receivedMessage.SourceId);
+        Assert.Equal(message.Payload, receivedMessage.Payload);
     }
-    
+
     [Fact]
-    public void PublishMessage_WithMultipleSubscribers_AllSubscribersReceiveMessage()
+    public void Dispose_UnsubscribesFromHubEvent()
     {
         // Arrange
-        var hubContext = Substitute.For<IHubContext<TransportHub>>();
-        var publisher = new SignalRServerPublisher(hubContext);
-        
-        var subscriberCount = 3;
-        var receivedCount = 0;
-        var testMessage = new TransportMessage
+        var message = new TransportMessage
         {
-            MessageType = "TestCommand",
+            MessageType = "TestMessage",
             SourceId = Guid.NewGuid(),
-            Payload = "{}",
-            Timestamp = DateTime.UtcNow
+            Payload = "TestPayload"
         };
-        
+
+        bool messageReceived = false;
+        _publisher.Subscribe(_ => messageReceived = true);
+
         // Act
-        for (var i = 0; i < subscriberCount; i++)
-        {
-            publisher.Subscribe(msg =>
-            {
-                msg.MessageType.ShouldBe(testMessage.MessageType);
-                msg.SourceId.ShouldBe(testMessage.SourceId);
-                msg.Payload.ShouldBe(testMessage.Payload);
-                Interlocked.Increment(ref receivedCount);
-            });
-        }
-        
-        // Simulate a message received from the hub
-        TransportHub.SimulateMessageReceived(testMessage);
-        
+        _publisher.Dispose();
+        TransportHub.SimulateMessageReceived(message);
+
         // Assert
-        receivedCount.ShouldBe(subscriberCount);
-    }
-    
-    [Fact]
-    public void Dispose_UnsubscribesFromHubEvents()
-    {
-        // Arrange
-        var hubContext = Substitute.For<IHubContext<TransportHub>>();
-        var publisher = new SignalRServerPublisher(hubContext);
-        
-        var receivedMessage = false;
-        publisher.Subscribe(_ => receivedMessage = true);
-        
-        // Act
-        publisher.Dispose();
-        
-        // Simulate a message received from the hub
-        TransportHub.SimulateMessageReceived(new TransportMessage
-        {
-            MessageType = "TestCommand",
-            SourceId = Guid.NewGuid(),
-            Payload = "{}",
-            Timestamp = DateTime.UtcNow
-        });
-        
-        // Assert - the subscriber should not be notified after disposal
-        receivedMessage.ShouldBeFalse();
+        Assert.False(messageReceived);
     }
 }

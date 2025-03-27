@@ -20,7 +20,7 @@ public class SignalRServerPublisher : ITransportPublisher, IDisposable
         _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
         
         // Subscribe to the hub's message event
-        TransportHub.OnMessageReceived += HandleMessageReceived;
+        TransportHub.MessageReceived += HandleMessageReceived;
     }
 
     /// <summary>
@@ -114,7 +114,7 @@ public class SignalRServerPublisher : ITransportPublisher, IDisposable
         _isDisposed = true;
         
         // Unsubscribe from the hub's message event
-        TransportHub.OnMessageReceived -= HandleMessageReceived;
+        TransportHub.MessageReceived -= HandleMessageReceived;
         
         GC.SuppressFinalize(this);
     }

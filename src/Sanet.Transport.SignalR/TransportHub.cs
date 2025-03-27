@@ -1,36 +1,38 @@
 using Microsoft.AspNetCore.SignalR;
+using System;
+using System.Threading.Tasks;
 
 namespace Sanet.Transport.SignalR;
 
 /// <summary>
-/// SignalR Hub for transport message communication
+/// SignalR hub for transport message communication
 /// </summary>
 public class TransportHub : Hub
 {
     /// <summary>
-    /// Event that fires when a message is received from a client
+    /// Event raised when a message is received from a client
     /// </summary>
-    internal static event Action<TransportMessage>? OnMessageReceived;
-    
+    internal static event Action<TransportMessage>? MessageReceived;
+
     /// <summary>
-    /// Receives a message from a client and broadcasts it to all connected clients
+    /// Called by clients to send a message
     /// </summary>
-    /// <param name="message">The transport message to broadcast</param>
-    /// <returns>A task representing the asynchronous operation</returns>
+    /// <param name="message">The transport message to send</param>
     public async Task SendMessage(TransportMessage message)
     {
-        // Invoke the event to notify local subscribers
-        OnMessageReceived?.Invoke(message);
+        // Notify local subscribers
+        MessageReceived?.Invoke(message);
         
-        // Broadcast the message to all connected clients
-        await Clients.All.SendAsync("ReceiveMessage", message);
+        // Forward to all clients except the sender
+        await Clients.Others.SendAsync("ReceiveMessage", message);
     }
     
     /// <summary>
-    /// For testing purposes only - allows tests to simulate a message received event
+    /// Simulates a message being received (for testing)
     /// </summary>
+    /// <param name="message">The message to simulate</param>
     internal static void SimulateMessageReceived(TransportMessage message)
     {
-        OnMessageReceived?.Invoke(message);
+        MessageReceived?.Invoke(message);
     }
 }
