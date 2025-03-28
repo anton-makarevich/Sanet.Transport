@@ -22,13 +22,13 @@ jobs:
           dotnet-version: 9.x
 
       - name: Run Rx Tests
-        run: dotnet test tests/Sanet.Transport.Rx.Tests/Sanet.Transport.Rx.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport]*
+        run: dotnet test tests/Sanet.Transport.Rx.Tests/Sanet.Transport.Rx.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport.Rx]*
 
       - name: Run Channel Tests
-        run: dotnet test tests/Sanet.Transport.Channel.Tests/Sanet.Transport.Channel.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport]*
+        run: dotnet test tests/Sanet.Transport.Channel.Tests/Sanet.Transport.Channel.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport.Channel]*
 
       - name: Run SignalR Server Tests
-        run: dotnet test tests/Sanet.Transport.SignalR.Tests/Sanet.Transport.SignalR.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport]* /p:Exclude=[Sanet.Transport.SignalR.Publishers.SignalRClientPublisher]*
+        run: dotnet test tests/Sanet.Transport.SignalR.Tests/Sanet.Transport.SignalR.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport.SignalR]* /p:Exclude=[Sanet.Transport.SignalR.Publishers.SignalRClientPublisher]*
 
       - name: Upload test results
         env:
