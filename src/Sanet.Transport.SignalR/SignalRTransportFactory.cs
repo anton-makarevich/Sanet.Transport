@@ -22,7 +22,7 @@ public static class SignalRTransportFactory
         int discoveryPort = 5001)
     {
         var hostManager = new SignalRHostManager(port);
-        await hostManager.StartAsync();
+        await hostManager.Start();
         
         if (enableDiscovery)
         {

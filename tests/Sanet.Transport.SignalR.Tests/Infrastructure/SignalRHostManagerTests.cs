@@ -1,5 +1,6 @@
 using Sanet.Transport.SignalR.Infrastructure;
 using Sanet.Transport.SignalR.Publishers;
+using Shouldly;
 using Xunit;
 
 namespace Sanet.Transport.SignalR.Tests.Infrastructure;
@@ -13,19 +14,18 @@ public class SignalRHostManagerTests
         var hostManager = new SignalRHostManager();
         
         // Assert
-        Assert.NotNull(hostManager);
+        hostManager.ShouldNotBeNull();
     }
     
     [Fact]
-    public void Constructor_WithCustomUrl_CreatesValidInstance()
+    public void Constructor_WithCustomPort_CreatesValidInstance()
     {
         // Arrange & Act
         const int customPort = 5001;
         var hostManager = new SignalRHostManager(customPort);
         
         // Assert
-        Assert.NotNull(hostManager);
-        // We can't easily test the URL was set correctly without exposing it
+        hostManager.ShouldNotBeNull();
     }
     
     [Fact]
@@ -33,23 +33,70 @@ public class SignalRHostManagerTests
     {
         // Arrange
         var hostManager = new SignalRHostManager();
-        await hostManager.StartAsync();
+        await hostManager.Start();
         
         // Act
         var publisher = hostManager.Publisher;
         
         // Assert
-        Assert.NotNull(publisher);
-        Assert.IsType<SignalRServerPublisher>(publisher);
+        publisher.ShouldNotBeNull();
+        publisher.ShouldBeOfType<SignalRServerPublisher>();
+        hostManager.Dispose();
     }
     
     [Fact]
-    public void Dispose_DoesNotThrow()
+    public async Task Dispose_DoesNotThrow()
+    {
+        // Arrange
+        var hostManager = new SignalRHostManager(4569,"myHub");
+        await hostManager.Start();
+        
+        // Act & Assert - should not throw
+        Should.NotThrow(() => hostManager.Dispose());
+    }
+    
+    [Fact]
+    public void HubUrl_ReturnsValidUrl()
+    {
+        // Arrange
+        var hostManager = new SignalRHostManager(4569,"myHub");
+        
+        // Act & Assert - should not throw
+        hostManager.HubUrl.ShouldBe("http://0.0.0.0:4569/myHub");
+        hostManager.Dispose();
+    }
+    
+    [Fact]
+    public async Task Start_ThrowsObjectDisposedException_WhenManagerIsDisposed()
     {
         // Arrange
         var hostManager = new SignalRHostManager();
-        
-        // Act & Assert - should not throw
+        await hostManager.Start(); // Start and dispose to set internal state
         hostManager.Dispose();
+
+        // Act & Assert
+        await Should.ThrowAsync<ObjectDisposedException>(async () => await hostManager.Start());
+    }
+
+    [Fact]
+    public async Task Publisher_ThrowsObjectDisposedException_WhenManagerIsDisposed()
+    {
+        // Arrange
+        var hostManager = new SignalRHostManager();
+        await hostManager.Start(); // Start and dispose to set internal state
+        hostManager.Dispose();
+
+        // Act & Assert
+        Should.Throw<ObjectDisposedException>(() => hostManager.Publisher);
+    }
+
+    [Fact]
+    public void Publisher_ThrowsInvalidOperationException_WhenManagerNotStarted()
+    {
+        // Arrange
+        var hostManager = new SignalRHostManager();
+
+        // Act & Assert
+        Should.Throw<InvalidOperationException>(() => hostManager.Publisher);
     }
 }

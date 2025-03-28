@@ -28,7 +28,7 @@ public class SignalRHostManager : IDisposable
     /// <summary>
     /// Starts the SignalR host
     /// </summary>
-    public async Task StartAsync()
+    public async Task Start()
     {
         if (_isDisposed)
             throw new ObjectDisposedException(nameof(SignalRHostManager));
