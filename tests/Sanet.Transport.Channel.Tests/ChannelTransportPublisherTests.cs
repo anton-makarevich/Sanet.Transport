@@ -166,4 +166,82 @@ public class ChannelTransportPublisherTests
         await Task.Delay(200);
         receivedCount.ShouldBe(messageCount);
     }
+
+    [Fact]
+    public void Subscribe_AfterDispose_ThrowsObjectDisposedException()
+    {
+        // Arrange
+        var publisher = new ChannelTransportPublisher();
+        publisher.Dispose();
+
+        // Act & Assert
+        Should.Throw<ObjectDisposedException>(() =>
+        {
+            publisher.Subscribe(_ => { });
+        });
+    }
+
+    [Fact]
+    public void Dispose_MultipleCalls_DoesNotThrow()
+    {
+        // Arrange
+        var publisher = new ChannelTransportPublisher();
+
+        // Act
+        publisher.Dispose();
+
+        // Assert
+        Should.NotThrow(() =>
+        {
+            publisher.Dispose();
+        });
+    }
+
+    [Fact]
+    public async Task Subscribe_WhenSubscriberThrows_OtherSubscribersStillReceiveMessage()
+    {
+        // Arrange
+        // Use a small delay in the console write to allow time for potential processing issues
+        using var publisher = new ChannelTransportPublisher(); 
+        var subscriber1Received = false;
+        var subscriber3Received = false;
+        var testMessage = new TransportMessage
+        {
+            MessageType = "Test",
+            SourceId = Guid.NewGuid()
+        };
+
+        // Act
+        publisher.Subscribe(_ =>
+        {
+            subscriber1Received = true;
+        });
+        
+        // Subscriber that throws
+        publisher.Subscribe(_ => throw new InvalidOperationException("Test Exception from Subscriber 2"));
+
+        publisher.Subscribe(_ =>
+        {
+            subscriber3Received = true;
+        });
+
+        await publisher.PublishMessage(testMessage);
+
+        // Assert - wait a bit for async processing
+        await Task.Delay(100); 
+        subscriber1Received.ShouldBeTrue("Subscriber 1 should have received the message before the exception.");
+        subscriber3Received.ShouldBeTrue("Subscriber 3 should have received the message despite the exception in Subscriber 2.");
+
+        // Verify subsequent messages are still processed (optional but good)
+        var subscriber4Received = false;
+        var testMessage2 = new TransportMessage
+        {
+            MessageType = "Test2",
+            SourceId = Guid.NewGuid()
+        };
+        publisher.Subscribe(_ => subscriber4Received = true); // Add a new subscriber
+        await publisher.PublishMessage(testMessage2);
+        await Task.Delay(100);
+        subscriber4Received.ShouldBeTrue("Subsequent messages should still be processed after a subscriber exception.");
+    }
 }
