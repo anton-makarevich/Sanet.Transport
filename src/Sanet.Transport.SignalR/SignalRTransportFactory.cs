@@ -12,12 +12,12 @@ public static class SignalRTransportFactory
     /// <summary>
     /// Creates a host that can accept client connections
     /// </summary>
-    /// <param name="port">Port to host on (default: 2439)</param>
+    /// <param name="port">Port to host on (default: 5000)</param>
     /// <param name="enableDiscovery">Whether to enable network discovery</param>
     /// <param name="discoveryPort">Port to use for discovery broadcasts (default: 5001)</param>
     /// <returns>A host manager containing the publisher</returns>
     public static async Task<SignalRHostManager> CreateHostAsync(
-        int port = 2439, 
+        int port = 5000, 
         bool enableDiscovery = true,
         int discoveryPort = 5001)
     {
