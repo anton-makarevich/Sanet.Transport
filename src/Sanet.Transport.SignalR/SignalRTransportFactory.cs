@@ -16,7 +16,7 @@ public static class SignalRTransportFactory
     /// <param name="enableDiscovery">Whether to enable network discovery</param>
     /// <param name="discoveryPort">Port to use for discovery broadcasts (default: 5001)</param>
     /// <returns>A host manager containing the publisher</returns>
-    public static async Task<SignalRHostManager> CreateHostAsync(
+    public static async Task<SignalRHostManager> CreateHost(
         int port = 5000, 
         bool enableDiscovery = true,
         int discoveryPort = 5001)
@@ -49,7 +49,7 @@ public static class SignalRTransportFactory
     /// <param name="timeoutSeconds">How long to search for hosts</param>
     /// <param name="discoveryPort">Port to use for discovery (default: 5001)</param>
     /// <returns>List of discovered hub URLs</returns>
-    public static async Task<List<string>> DiscoverHostsAsync(
+    public static async Task<List<string>> DiscoverHosts(
         int timeoutSeconds = 5,
         int discoveryPort = 5001)
     {

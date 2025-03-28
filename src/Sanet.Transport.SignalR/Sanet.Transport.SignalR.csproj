@@ -11,7 +11,7 @@
     
     <!-- NuGet package properties -->
     <PackageId>Sanet.Transport.SignalR</PackageId>
-    <Version>0.1.0-preview</Version>
+    <Version>0.2.0-preview</Version>
     <Authors>Anton Makarevich</Authors>
     <Company>Sanet</Company>
     <Description>SignalR implementation of the Sanet.Transport abstractions</Description>

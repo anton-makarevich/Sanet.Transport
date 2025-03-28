@@ -1,4 +1,6 @@
+using Sanet.Transport.SignalR.Infrastructure;
 using Sanet.Transport.SignalR.Publishers;
+using Shouldly;
 using Xunit;
 
 namespace Sanet.Transport.SignalR.Tests;
@@ -15,16 +17,16 @@ public class SignalRTransportFactoryTests
         var client = SignalRTransportFactory.CreateClient(hubUrl);
         
         // Assert
-        Assert.NotNull(client);
-        Assert.IsType<SignalRClientPublisher>(client);
+        client.ShouldNotBeNull();
+        client.ShouldBeOfType<SignalRClientPublisher>();
     }
     
     [Fact]
     public void CreateClient_WithInvalidUrl_ThrowsArgumentException()
     {
         // Arrange, Act & Assert
-        Assert.Throws<ArgumentException>(() => SignalRTransportFactory.CreateClient(string.Empty));
-        Assert.Throws<ArgumentException>(() => SignalRTransportFactory.CreateClient(null!));
+        Should.Throw<ArgumentException>(() => SignalRTransportFactory.CreateClient(string.Empty));
+        Should.Throw<ArgumentException>(() => SignalRTransportFactory.CreateClient(null!));
     }
     
     [Fact]
@@ -32,10 +34,58 @@ public class SignalRTransportFactoryTests
     {
         // Arrange & Act
         // Use a very short timeout and unique port to make the test run quickly and avoid conflicts
-        var hosts = await SignalRTransportFactory.DiscoverHostsAsync(timeoutSeconds: 1, discoveryPort: 5004);
+        var hosts = await SignalRTransportFactory.DiscoverHosts(timeoutSeconds: 1, discoveryPort: 5004);
         
         // Assert
-        Assert.NotNull(hosts);
-        // We can't guarantee there are no hosts on the network, so we can't assert Count == 0
+        hosts.ShouldNotBeNull(); // Cannot assert empty as other hosts might be discoverable on the network
+    }
+    
+    [Fact]
+    public async Task CreateHost_ReturnsStartedHostManager()
+    {
+        // Arrange
+        SignalRHostManager? hostManager = null;
+        try
+        {
+            // Act
+            hostManager = await SignalRTransportFactory.CreateHost(port: 5005, enableDiscovery: false); // Use unique port and disable discovery for test isolation
+
+            // Assert
+            hostManager.ShouldNotBeNull();
+            hostManager.Publisher.ShouldNotBeNull(); // Accessing Publisher confirms it started successfully
+            hostManager.Publisher.ShouldBeOfType<SignalRServerPublisher>();
+            hostManager.HubUrl.ShouldEndWith(":5005/transporthub");
+        }
+        finally
+        {
+            // Cleanup
+            hostManager?.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task CreateHost_WithCustomHub_UsesCorrectHubName()
+    {
+        // Arrange
+        SignalRHostManager? hostManager = null;
+        const string customHub = "myCustomHub";
+        try
+        {
+            // Act - Note: CreateHost doesn't currently take a hub name, using SignalRHostManager directly to test this aspect
+            // This test highlights a potential missing feature in the factory method if customizing the hub name is desired.
+            // For now, we'll test the SignalRHostManager directly which *does* allow hub customization.
+            hostManager = new SignalRHostManager(port: 5006, hub: customHub);
+            await hostManager.Start();
+            
+            // Assert
+            hostManager.ShouldNotBeNull();
+            hostManager.Publisher.ShouldNotBeNull();
+            hostManager.HubUrl.ShouldEndWith($":5006/{customHub}");
+        }
+        finally
+        {
+            // Cleanup
+            hostManager?.Dispose();
+        }
     }
 }
