@@ -1,5 +1,4 @@
-using System;
-using System.Threading.Tasks;
+using Sanet.Transport.SignalR.Publishers;
 using Xunit;
 
 namespace Sanet.Transport.SignalR.Tests;
@@ -32,8 +31,8 @@ public class SignalRTransportFactoryTests
     public async Task DiscoverHosts_ReturnsEmptyListWhenNoHostsAvailable()
     {
         // Arrange & Act
-        // Use a very short timeout to make the test run quickly
-        var hosts = await SignalRTransportFactory.DiscoverHostsAsync(timeoutSeconds: 1);
+        // Use a very short timeout and unique port to make the test run quickly and avoid conflicts
+        var hosts = await SignalRTransportFactory.DiscoverHostsAsync(timeoutSeconds: 1, discoveryPort: 5004);
         
         // Assert
         Assert.NotNull(hosts);

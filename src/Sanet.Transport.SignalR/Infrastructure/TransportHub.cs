@@ -1,8 +1,6 @@
 using Microsoft.AspNetCore.SignalR;
-using System;
-using System.Threading.Tasks;
 
-namespace Sanet.Transport.SignalR;
+namespace Sanet.Transport.SignalR.Infrastructure;
 
 /// <summary>
 /// SignalR hub for transport message communication

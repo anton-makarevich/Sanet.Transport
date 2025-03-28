@@ -1,8 +1,7 @@
-using System;
-using System.Threading.Tasks;
+using Sanet.Transport.SignalR.Discovery;
 using Xunit;
 
-namespace Sanet.Transport.SignalR.Tests;
+namespace Sanet.Transport.SignalR.Tests.Discovery;
 
 public class SignalRDiscoveryServiceTests
 {
@@ -14,13 +13,14 @@ public class SignalRDiscoveryServiceTests
         
         // Assert
         Assert.NotNull(service);
+        service.Stop();
     }
     
     [Fact]
     public void StartListening_DoesNotThrow()
     {
-        // Arrange
-        using var service = new SignalRDiscoveryService();
+        // Arrange - use a unique port for this test
+        using var service = new SignalRDiscoveryService(5001);
         
         // Act & Assert - should not throw
         service.StartListening();
@@ -32,8 +32,8 @@ public class SignalRDiscoveryServiceTests
     [Fact]
     public void BroadcastPresence_DoesNotThrow()
     {
-        // Arrange
-        using var service = new SignalRDiscoveryService();
+        // Arrange - use a unique port for this test
+        using var service = new SignalRDiscoveryService(5003);
         var hubUrl = "http://localhost:5000/transporthub";
         
         // Act & Assert - should not throw
@@ -79,7 +79,7 @@ public class SignalRDiscoveryServiceTests
     {
         // Arrange
         using var service = new SignalRDiscoveryService();
-        bool eventRaised = false;
+        var eventRaised = false;
         
         // Act
         Action<string> handler = _ => eventRaised = true;

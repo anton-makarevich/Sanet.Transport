@@ -1,6 +1,6 @@
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
+using Sanet.Transport.SignalR.Discovery;
+using Sanet.Transport.SignalR.Infrastructure;
+using Sanet.Transport.SignalR.Publishers;
 
 namespace Sanet.Transport.SignalR;
 
@@ -12,19 +12,21 @@ public static class SignalRTransportFactory
     /// <summary>
     /// Creates a host that can accept client connections
     /// </summary>
-    /// <param name="url">URL to host on (default: http://0.0.0.0:5000)</param>
+    /// <param name="port">Port to host on (default: 2439)</param>
     /// <param name="enableDiscovery">Whether to enable network discovery</param>
+    /// <param name="discoveryPort">Port to use for discovery broadcasts (default: 5001)</param>
     /// <returns>A host manager containing the publisher</returns>
     public static async Task<SignalRHostManager> CreateHostAsync(
-        string url = "http://0.0.0.0:5000", 
-        bool enableDiscovery = true)
+        int port = 2439, 
+        bool enableDiscovery = true,
+        int discoveryPort = 5001)
     {
-        var hostManager = new SignalRHostManager(url);
+        var hostManager = new SignalRHostManager(port);
         await hostManager.StartAsync();
         
         if (enableDiscovery)
         {
-            var discovery = new SignalRDiscoveryService();
+            var discovery = new SignalRDiscoveryService(discoveryPort);
             discovery.BroadcastPresence(hostManager.HubUrl);
         }
         
@@ -45,11 +47,14 @@ public static class SignalRTransportFactory
     /// Discovers hosts on the local network
     /// </summary>
     /// <param name="timeoutSeconds">How long to search for hosts</param>
+    /// <param name="discoveryPort">Port to use for discovery (default: 5001)</param>
     /// <returns>List of discovered hub URLs</returns>
-    public static async Task<List<string>> DiscoverHostsAsync(int timeoutSeconds = 5)
+    public static async Task<List<string>> DiscoverHostsAsync(
+        int timeoutSeconds = 5,
+        int discoveryPort = 5001)
     {
         var discoveredHosts = new List<string>();
-        using var discovery = new SignalRDiscoveryService();
+        using var discovery = new SignalRDiscoveryService(discoveryPort);
         
         discovery.HostDiscovered += url => 
         {

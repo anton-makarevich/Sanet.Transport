@@ -1,12 +1,7 @@
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using System;
-using System.Threading.Tasks;
+using Sanet.Transport.SignalR.Publishers;
 
-namespace Sanet.Transport.SignalR;
+namespace Sanet.Transport.SignalR.Infrastructure;
 
 /// <summary>
 /// Manages a self-contained SignalR host that can be embedded in any application
@@ -15,16 +10,19 @@ public class SignalRHostManager : IDisposable
 {
     private IHost? _host;
     private readonly string _url;
+    private readonly string _hub;
     private SignalRServerPublisher? _publisher;
     private bool _isDisposed;
 
     /// <summary>
     /// Creates a new SignalR host manager
     /// </summary>
-    /// <param name="url">URL to host the SignalR hub on (e.g., "http://0.0.0.0:5000")</param>
-    public SignalRHostManager(string url = "http://0.0.0.0:5000")
+    /// <param name="port">Port to host the SignalR hub on (e.g., "http://0.0.0.0:5000")</param>
+    /// <param name="hub">Hub name</param>
+    public SignalRHostManager(int port = 5000, string hub = "transporthub")
     {
-        _url = url;
+        _url =$"http://0.0.0.0:{port}";
+        _hub = hub;
     }
 
     /// <summary>
@@ -46,7 +44,7 @@ public class SignalRHostManager : IDisposable
         
         // Configure the HTTP request pipeline
         app.UseRouting();
-        app.MapHub<TransportHub>("/transporthub");
+        app.MapHub<TransportHub>($"/{_hub}");
         
         // Create the publisher
         _publisher = new SignalRServerPublisher(app.Services.GetRequiredService<IHubContext<TransportHub>>());
@@ -76,7 +74,7 @@ public class SignalRHostManager : IDisposable
     /// <summary>
     /// Gets the URL where the SignalR hub is hosted
     /// </summary>
-    public string HubUrl => $"{_url}/transporthub";
+    public string HubUrl => $"{_url}/{_hub}";
 
     /// <summary>
     /// Disposes the host manager and stops the SignalR host

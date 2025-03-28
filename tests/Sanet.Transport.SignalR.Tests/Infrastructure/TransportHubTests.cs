@@ -1,7 +1,7 @@
-using System;
+using Sanet.Transport.SignalR.Infrastructure;
 using Xunit;
 
-namespace Sanet.Transport.SignalR.Tests;
+namespace Sanet.Transport.SignalR.Tests.Infrastructure;
 
 public class TransportHubTests
 {

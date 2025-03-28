@@ -1,10 +1,8 @@
-using Microsoft.AspNetCore.SignalR;
-using NSubstitute;
-using System;
-using System.Threading.Tasks;
+using Sanet.Transport.SignalR.Infrastructure;
+using Sanet.Transport.SignalR.Publishers;
 using Xunit;
 
-namespace Sanet.Transport.SignalR.Tests;
+namespace Sanet.Transport.SignalR.Tests.Infrastructure;
 
 public class SignalRHostManagerTests
 {
@@ -22,8 +20,8 @@ public class SignalRHostManagerTests
     public void Constructor_WithCustomUrl_CreatesValidInstance()
     {
         // Arrange & Act
-        var customUrl = "http://localhost:5001";
-        var hostManager = new SignalRHostManager(customUrl);
+        const int customPort = 5001;
+        var hostManager = new SignalRHostManager(customPort);
         
         // Assert
         Assert.NotNull(hostManager);
@@ -31,10 +29,11 @@ public class SignalRHostManagerTests
     }
     
     [Fact]
-    public void Publisher_ReturnsNonNullInstance()
+    public async Task Publisher_ReturnsNonNullInstance()
     {
         // Arrange
         var hostManager = new SignalRHostManager();
+        await hostManager.StartAsync();
         
         // Act
         var publisher = hostManager.Publisher;

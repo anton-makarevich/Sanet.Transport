@@ -1,18 +1,16 @@
-using System;
-using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using System.Threading.Tasks;
 
-namespace Sanet.Transport.SignalR;
+namespace Sanet.Transport.SignalR.Discovery;
 
 /// <summary>
 /// Provides network discovery for SignalR hosts on the local network
 /// </summary>
 public class SignalRDiscoveryService : IDisposable
 {
-    private const int DiscoveryPort = 5001;
+    private const int DefaultDiscoveryPort = 5001;
+    private readonly int _discoveryPort;
     private UdpClient? _client;
     private bool _isRunning;
     private bool _isDisposed;
@@ -21,6 +19,15 @@ public class SignalRDiscoveryService : IDisposable
     /// Event raised when a SignalR host is discovered
     /// </summary>
     public event Action<string>? HostDiscovered;
+
+    /// <summary>
+    /// Creates a new instance of the SignalRDiscoveryService
+    /// </summary>
+    /// <param name="discoveryPort">Optional port to use for discovery (default: 5001)</param>
+    public SignalRDiscoveryService(int discoveryPort = DefaultDiscoveryPort)
+    {
+        _discoveryPort = discoveryPort;
+    }
 
     /// <summary>
     /// Broadcasts this host's presence on the network
@@ -37,7 +44,7 @@ public class SignalRDiscoveryService : IDisposable
         {
             using var client = new UdpClient();
             client.EnableBroadcast = true;
-            var endpoint = new IPEndPoint(IPAddress.Broadcast, DiscoveryPort);
+            var endpoint = new IPEndPoint(IPAddress.Broadcast, _discoveryPort);
             var data = Encoding.UTF8.GetBytes(hubUrl);
             
             while (_isRunning && !_isDisposed)
@@ -65,7 +72,7 @@ public class SignalRDiscoveryService : IDisposable
             throw new ObjectDisposedException(nameof(SignalRDiscoveryService));
 
         _isRunning = true;
-        _client = new UdpClient(DiscoveryPort);
+        _client = new UdpClient(_discoveryPort);
         
         Task.Run(async () =>
         {

@@ -1,10 +1,7 @@
-using Microsoft.AspNetCore.SignalR.Client;
-using NSubstitute;
-using System;
-using System.Threading.Tasks;
+using Sanet.Transport.SignalR.Publishers;
 using Xunit;
 
-namespace Sanet.Transport.SignalR.Tests;
+namespace Sanet.Transport.SignalR.Tests.Publishers;
 
 public class SignalRClientPublisherTests
 {
