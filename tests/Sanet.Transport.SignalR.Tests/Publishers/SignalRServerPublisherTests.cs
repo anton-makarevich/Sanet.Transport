@@ -1,9 +1,11 @@
 using Microsoft.AspNetCore.SignalR;
 using NSubstitute;
+using Sanet.Transport.SignalR.Infrastructure;
+using Sanet.Transport.SignalR.Publishers;
 using Shouldly;
 using Xunit;
 
-namespace Sanet.Transport.SignalR.Tests;
+namespace Sanet.Transport.SignalR.Tests.Publishers;
 
 public class SignalRServerPublisherTests
 {
