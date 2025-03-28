@@ -9,7 +9,7 @@
     
     <!-- NuGet package properties -->
     <PackageId>Sanet.Transport.Rx</PackageId>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Authors>Anton Makarevich</Authors>
     <Company>Sanet</Company>
     <Description>Reactive Extensions implementation of the Sanet.Transport abstractions</Description>
@@ -21,10 +21,7 @@
 
   <ItemGroup>
     <PackageReference Include="System.Reactive" Version="6.0.1" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\Sanet.Transport\Sanet.Transport.csproj" />
+    <PackageReference Include="Sanet.Transport" Version="1.0.1" />
   </ItemGroup>
 
 </Project>
