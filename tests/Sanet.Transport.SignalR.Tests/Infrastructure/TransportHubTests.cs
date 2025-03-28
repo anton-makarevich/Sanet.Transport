@@ -1,4 +1,5 @@
 using Sanet.Transport.SignalR.Infrastructure;
+using Shouldly;
 using Xunit;
 
 namespace Sanet.Transport.SignalR.Tests.Infrastructure;
@@ -23,10 +24,10 @@ public class TransportHubTests
         TransportHub.SimulateMessageReceived(message);
         
         // Assert
-        Assert.NotNull(receivedMessage);
-        Assert.Equal(message.MessageType, receivedMessage.MessageType);
-        Assert.Equal(message.SourceId, receivedMessage.SourceId);
-        Assert.Equal(message.Payload, receivedMessage.Payload);
+        receivedMessage.ShouldNotBeNull();
+        receivedMessage.MessageType.ShouldBe(message.MessageType);
+        receivedMessage.SourceId.ShouldBe(message.SourceId);
+        receivedMessage.Payload.ShouldBe(message.Payload);
     }
     
     [Fact]

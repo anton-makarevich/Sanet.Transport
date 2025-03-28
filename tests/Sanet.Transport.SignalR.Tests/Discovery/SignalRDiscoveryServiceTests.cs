@@ -1,4 +1,5 @@
 using Sanet.Transport.SignalR.Discovery;
+using Shouldly;
 using Xunit;
 
 namespace Sanet.Transport.SignalR.Tests.Discovery;
@@ -87,6 +88,6 @@ public class SignalRDiscoveryServiceTests
         service.HostDiscovered -= handler;
         
         // Assert - just testing that subscription operations don't throw
-        Assert.False(eventRaised);
+        eventRaised.ShouldBeFalse();
     }
 }
