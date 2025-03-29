@@ -28,7 +28,7 @@ jobs:
         run: dotnet test tests/Sanet.Transport.Channel.Tests/Sanet.Transport.Channel.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport.Channel]*
 
       - name: Run SignalR Server Tests
-        run: dotnet test tests/Sanet.Transport.SignalR.Tests/Sanet.Transport.SignalR.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport.SignalR]*
+        run: dotnet test tests/Sanet.Transport.SignalR.Tests/Sanet.Transport.SignalR.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport.SignalR]* /p:Exclude="[Sanet.Transport.SignalR]*Discovery/UdpClientFactory.cs"
 
       - name: Upload test results
         env:
