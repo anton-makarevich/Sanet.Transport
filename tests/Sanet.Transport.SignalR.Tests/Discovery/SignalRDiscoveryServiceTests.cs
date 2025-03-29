@@ -220,4 +220,60 @@ public class SignalRDiscoveryServiceTests
         Should.Throw<ObjectDisposedException>(() => _discoveryService.StartListening()); // Use Shouldly
         Should.Throw<ObjectDisposedException>(() => _discoveryService.BroadcastPresence("test")); // Use Shouldly
     }
+
+    [Fact]
+    public async Task TestListeningLoop_ContinuesAfterReceiveException()
+    {
+        // Arrange
+        var generalException = new Exception("Simulated receive error");
+        var receiveTcs = new TaskCompletionSource<UdpReceiveResult>(); // To block after exception
+        
+        // Setup ReceiveAsync: Throw exception once, then block indefinitely
+        _mockListenerClient.ReceiveAsync()
+            .Returns(
+                Task.FromException<UdpReceiveResult>(generalException),
+                receiveTcs.Task 
+            );
+
+        // Act
+        _discoveryService.StartListening();
+        // Wait long enough for the exception path (includes 1s delay) and the next call
+        await Task.Delay(1500); 
+
+        // Assert
+        // Verify ReceiveAsync was called twice: once throwing, once blocking
+        _ = _mockListenerClient.Received(2).ReceiveAsync(); 
+        // We can't easily assert Console.Error output here, 
+        // but verifying the loop continues implies the catch block was executed.
+    }
+
+    [Fact]
+    public async Task TestBroadcastLoop_ContinuesAfterSendException()
+    {
+        // Arrange
+        const string hubUrl = "http://testurl";
+        var expectedData = Encoding.UTF8.GetBytes(hubUrl);
+        var generalException = new Exception("Simulated send error");
+        var sendCounter = 0;
+        
+        _mockSenderClient.SendAsync(Arg.Any<byte[]>(), Arg.Any<int>(), Arg.Any<IPEndPoint>())
+            .Returns(async callInfo => 
+            { 
+                sendCounter++;
+                if (sendCounter == 1)
+                {
+                    throw generalException; 
+                }
+                await Task.CompletedTask; // Simulate successful send otherwise
+            });
+
+        // Act
+        _discoveryService.BroadcastPresence(hubUrl);
+        // Wait for first send (throws), delay in catch (5s), next send attempt
+        await Task.Delay(5500); 
+
+        // Assert
+        // Verify SendAsync was called at least twice: once throwing, once successful
+        await SubstituteExtensions.Received(_mockSenderClient, 2).SendAsync(Arg.Any<byte[]>(), expectedData.Length, _expectedMulticastEndpoint);
+    }
 }
