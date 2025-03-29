@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Sockets;
 using System.Text;
 
 namespace Sanet.Transport.SignalR.Discovery;
@@ -12,7 +11,8 @@ public class SignalRDiscoveryService : IDisposable
     private const int DefaultDiscoveryPort = 5001;
     private static readonly IPAddress MulticastAddress = IPAddress.Parse("239.0.0.1"); // Multicast address, we can make it configurable
     private readonly int _discoveryPort;
-    private UdpClient? _listenerClient;
+    private readonly IUdpClientFactory _udpClientFactory;
+    private IUdpClientWrapper? _listenerClient;
     private bool _isBroadcasting;
     private bool _isListening;
     private bool _isDisposed;
@@ -23,11 +23,23 @@ public class SignalRDiscoveryService : IDisposable
     public event Action<string>? HostDiscovered;
 
     /// <summary>
-    /// Creates a new instance of the SignalRDiscoveryService
+    /// Creates a new instance of the SignalRDiscoveryService using the default UdpClientFactory.
     /// </summary>
     /// <param name="discoveryPort">Optional port to use for discovery (default: 5001)</param>
     public SignalRDiscoveryService(int discoveryPort = DefaultDiscoveryPort)
+        : this(new UdpClientFactory(), discoveryPort)
     {
+    }
+
+    /// <summary>
+    /// Creates a new instance of the SignalRDiscoveryService with a specific UDP client factory.
+    /// Used primarily for testing.
+    /// </summary>
+    /// <param name="udpClientFactory">The factory to create UDP client wrappers.</param>
+    /// <param name="discoveryPort">Optional port to use for discovery (default: 5001)</param>
+    public SignalRDiscoveryService(IUdpClientFactory udpClientFactory, int discoveryPort = DefaultDiscoveryPort)
+    {
+        _udpClientFactory = udpClientFactory ?? throw new ArgumentNullException(nameof(udpClientFactory));
         _discoveryPort = discoveryPort;
     }
 
@@ -45,9 +57,8 @@ public class SignalRDiscoveryService : IDisposable
 
         Task.Run(async () =>
         {
-            // Use a separate client for sending to avoid potential conflicts with listening
-            using var senderClient = new UdpClient();
-            // Note: No JoinMulticastGroup needed for sending
+            // Use a separate client for sending
+            using var senderClient = _udpClientFactory.CreateSenderClient();
             var endpoint = new IPEndPoint(MulticastAddress, _discoveryPort);
             var data = Encoding.UTF8.GetBytes(hubUrl);
 
@@ -82,14 +93,17 @@ public class SignalRDiscoveryService : IDisposable
 
         try
         {
-            _listenerClient = new UdpClient(_discoveryPort);
+            // Dispose previous listener if any (shouldn't happen with _isListening check, but defensive)
+            CloseAndDisposeListener(); 
+
+            _listenerClient = _udpClientFactory.CreateListenerClient(_discoveryPort);
             _listenerClient.JoinMulticastGroup(MulticastAddress);
             Console.WriteLine($"Joined multicast group {MulticastAddress} on port {_discoveryPort}"); // Optional logging
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to initialize multicast listener: {ex.Message}");
-            _listenerClient?.Dispose();
+            _listenerClient?.Dispose(); // Attempt to dispose if creation failed partially
             _listenerClient = null;
             return; // Don't start the listening task if setup failed
         }
@@ -98,11 +112,15 @@ public class SignalRDiscoveryService : IDisposable
 
         Task.Run(async () =>
         {
-            while (_isListening && !_isDisposed && _listenerClient != null)
+            // Capture the client instance for the task closure
+            var currentListenerClient = _listenerClient;
+            if (currentListenerClient == null) return; // Should not happen if setup succeeded
+
+            while (_isListening && !_isDisposed)
             {
                 try
                 {
-                    var result = await _listenerClient.ReceiveAsync();
+                    var result = await currentListenerClient.ReceiveAsync();
                     var hubUrl = Encoding.UTF8.GetString(result.Buffer);
                     HostDiscovered?.Invoke(hubUrl);
                 }
@@ -147,13 +165,24 @@ public class SignalRDiscoveryService : IDisposable
     /// </summary>
     public void Dispose()
     {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    private void Dispose(bool disposing)
+    {
         if (_isDisposed)
             return;
 
-        _isDisposed = true;
-        Stop(); // Ensure broadcasting and listening are stopped
+        if (disposing)
+        {
+            // Stop loops and dispose managed resources (UDP client)
+            Stop(); 
+        }
 
-        GC.SuppressFinalize(this);
+        // Dispose unmanaged resources here if any
+
+        _isDisposed = true;
     }
 
     private void CloseAndDisposeListener()
@@ -161,9 +190,6 @@ public class SignalRDiscoveryService : IDisposable
         if (_listenerClient == null) return;
         try
         {
-            // Check if joined before trying to drop
-            // This might require tracking the joined state explicitly if needed,
-            // but often just trying to drop is sufficient and handles cases where join failed.
             _listenerClient.DropMulticastGroup(MulticastAddress);
             Console.WriteLine($"Left multicast group {MulticastAddress}"); // Optional logging
         }
