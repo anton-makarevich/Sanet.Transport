@@ -7,18 +7,20 @@ Console.WriteLine("Run as (S)erver or (C)lient?");
 var mode = Console.ReadKey().KeyChar;
 Console.WriteLine();
 
-if (mode == 's' || mode == 'S')
+switch (mode)
 {
-    await RunServerAsync();
+    case 's' or 'S':
+        await RunServerAsync();
+        break;
+    case 'c' or 'C':
+        await RunClientAsync();
+        break;
+    default:
+        Console.WriteLine("Invalid mode selected.");
+        break;
 }
-else if (mode == 'c' || mode == 'C')
-{
-    await RunClientAsync();
-}
-else
-{
-    Console.WriteLine("Invalid mode selected.");
-}
+
+return;
 
 static async Task RunServerAsync()
 {
