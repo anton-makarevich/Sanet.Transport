@@ -19,7 +19,7 @@ public class SignalRDiscoveryServiceTests
     private readonly IUdpClientWrapper _mockListenerClient;
     private readonly SignalRDiscoveryService _discoveryService;
 
-    public SignalRDiscoveryServiceTests().
+    public SignalRDiscoveryServiceTests()
     {
         _mockFactory = Substitute.For<IUdpClientFactory>();
         _mockSenderClient = Substitute.For<IUdpClientWrapper>();
@@ -38,7 +38,7 @@ public class SignalRDiscoveryServiceTests
         var act = () => new SignalRDiscoveryService(TestPort);
 
         // Assert
-        Should.NotThrow(act); // Use Shouldly
+        Should.NotThrow(act); 
     }
     
     [Fact]
@@ -48,7 +48,7 @@ public class SignalRDiscoveryServiceTests
         Action act = () => new SignalRDiscoveryService(null!, TestPort);
 
         // Assert
-        var ex = Should.Throw<ArgumentNullException>(act); // Use Shouldly
+        var ex = Should.Throw<ArgumentNullException>(act); 
         ex.ParamName.ShouldBe("udpClientFactory");
     }
 
