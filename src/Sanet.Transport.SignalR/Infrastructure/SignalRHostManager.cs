@@ -74,7 +74,39 @@ public class SignalRHostManager : IDisposable
     /// <summary>
     /// Gets the URL where the SignalR hub is hosted
     /// </summary>
-    public string HubUrl => $"{_url}/{_hub}";
+    public string HubUrl
+    {
+        get
+        {
+            // Replace 0.0.0.0 with a routable address
+            // First try to get the machine's LAN IP address
+            var hostAddress = "localhost"; // Default fallback
+            
+            try
+            {
+                // Get the machine's IP address that's not a loopback address
+                var host = System.Net.Dns.GetHostEntry(System.Net.Dns.GetHostName());
+                foreach (var ip in host.AddressList)
+                {
+                    // Prefer IPv4 addresses on the LAN
+                    if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                    {
+                        hostAddress = ip.ToString();
+                        break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error getting IP address: {ex}");
+                // If we can't get the IP, fall back to localhost
+            }
+            
+            // Replace the non-routable address with the actual IP
+            var url = _url.Replace("0.0.0.0", hostAddress);
+            return $"{url}/{_hub}";
+        }
+    }
 
     /// <summary>
     /// Disposes the host manager and stops the SignalR host
