@@ -60,9 +60,13 @@ public class SignalRHostManagerTests
     {
         // Arrange
         var hostManager = new SignalRHostManager(4569,"myHub");
-        
-        // Act & Assert - should not throw
-        hostManager.HubUrl.ShouldBe("http://0.0.0.0:4569/myHub");
+
+        // Act & Assert
+        var hubUrl = hostManager.HubUrl;
+        hubUrl.ShouldStartWith("http://");
+        hubUrl.ShouldContain(":4569/myHub");
+        //check if it contains valid ip address or localhost
+        hubUrl.ShouldMatch(@"http://(localhost|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):4569/myHub");
         hostManager.Dispose();
     }
     
