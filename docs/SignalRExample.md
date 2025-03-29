@@ -31,7 +31,7 @@ namespace AvaloniaHostApp
         public async Task InitializeHost()
         {
             // Create and start a SignalR host (defaults to http://0.0.0.0:5000)
-            _hostManager = await SignalRTransportFactory.CreateHostAsync();
+            _hostManager = await SignalRTransportFactory.CreateHost();
             
             // Get the publisher to send/receive messages
             _publisher = _hostManager.Publisher;
@@ -86,7 +86,7 @@ namespace AvaloniaClientApp
         public async Task<bool> ConnectToHost()
         {
             // Option 1: Discover hosts automatically
-            var hosts = await SignalRTransportFactory.DiscoverHostsAsync();
+            var hosts = await SignalRTransportFactory.DiscoverHosts();
             if (hosts.Count == 0)
             {
                 Console.WriteLine("No hosts found on the network");
@@ -108,7 +108,7 @@ namespace AvaloniaClientApp
                 _client.Subscribe(HandleIncomingMessage);
                 
                 // Start the connection
-                await _client.StartAsync();
+                await _client.Start();
                 
                 return true;
             }
@@ -149,7 +149,7 @@ namespace AvaloniaClientApp
         {
             if (_client != null)
             {
-                await _client.DisposeAsync();
+                await _client.Dispose();
             }
         }
     }
@@ -166,6 +166,6 @@ namespace AvaloniaClientApp
 ## Notes
 
 - The host will be accessible at `http://[ip]:5000/transporthub` by default
-- You can customize the host URL by passing a different URL to `CreateHostAsync()`
+- You can customize the host URL by passing a different URL to `CreateHost()`
 - Discovery uses UDP broadcasts on port 5001
 - For security in production environments, consider adding authentication
