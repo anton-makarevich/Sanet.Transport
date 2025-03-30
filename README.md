@@ -37,109 +37,21 @@ Install the core package:
 dotnet add package Sanet.Transport
 ```
 
-For Reactive Extensions implementation:
+For specific implementations, install the corresponding package:
 ```
 dotnet add package Sanet.Transport.Rx
-```
-
-For Channels implementation:
-```
 dotnet add package Sanet.Transport.Channel
-```
-
-For SignalR implementation:
-```
 dotnet add package Sanet.Transport.SignalR
 ```
 
-Or via the Package Manager Console:
-```
-Install-Package Sanet.Transport
-Install-Package Sanet.Transport.Rx
-Install-Package Sanet.Transport.Channel
-Install-Package Sanet.Transport.SignalR
-```
+## Library Documentation
 
-#### Using Project References (Alternative)
+For detailed documentation on each implementation, please refer to the README files in the respective library directories:
 
-If you prefer to reference the projects directly:
-
-```
-dotnet add reference path/to/Sanet.Transport.csproj
-```
-
-For Reactive Extensions implementation:
-```
-dotnet add reference path/to/Sanet.Transport.Rx.csproj
-```
-
-For Channels implementation:
-```
-dotnet add reference path/to/Sanet.Transport.Channel.csproj
-```
-
-For SignalR implementation:
-```
-dotnet add reference path/to/Sanet.Transport.SignalR.csproj
-```
-
-### Basic Usage
-
-```csharp
-// Create a transport publisher
-ITransportPublisher publisher = new RxTransportPublisher(); // or new ChannelTransportPublisher()
-
-// Subscribe to messages
-publisher.Subscribe(message => {
-    Console.WriteLine($"Received message: {message.CommandType}");
-    // Process the message
-});
-
-// Publish a message
-publisher.PublishMessage(new TransportMessage {
-    CommandType = "SomeCommand",
-    SourceId = Guid.NewGuid(),
-    Payload = "{\"key\": \"value\"}",
-    Timestamp = DateTime.UtcNow
-});
-```
-
-### SignalR Usage
-
-The SignalR implementation allows for real-time communication between applications over a network:
-
-```csharp
-// Create a SignalR host (server)
-var hostManager = await SignalRTransportFactory.CreateHostAsync(
-    port: 5000,
-    enableDiscovery: true);
-
-// Get the server-side publisher
-ITransportPublisher serverPublisher = hostManager.Publisher;
-
-// In another application, discover hosts on the network
-var hosts = await SignalRTransportFactory.DiscoverHostsAsync(timeoutSeconds: 5);
-
-// Connect to the first discovered host
-if (hosts.Count > 0)
-{
-    // Create a client publisher connected to the host
-    ITransportPublisher clientPublisher = SignalRTransportFactory.CreateClient(hosts[0]);
-    
-    // Subscribe to messages from the server
-    clientPublisher.Subscribe(message => {
-        Console.WriteLine($"Client received: {message.CommandType}");
-    });
-    
-    // Send a message to the server
-    clientPublisher.PublishMessage(new TransportMessage {
-        CommandType = "ClientCommand",
-        SourceId = Guid.NewGuid(),
-        Payload = "{\"client\": \"data\"}",
-        Timestamp = DateTime.UtcNow
-    });
-}
-```
+- [Sanet.Transport](src/Sanet.Transport/README.md) - Core abstractions
+- [Sanet.Transport.Rx](src/Sanet.Transport.Rx/README.md) - Reactive Extensions implementation
+- [Sanet.Transport.Channel](src/Sanet.Transport.Channel/README.md) - System.Threading.Channels implementation
+- [Sanet.Transport.SignalR](src/Sanet.Transport.SignalR/README.md) - ASP.NET Core SignalR implementation
 
 ## Project Structure
 

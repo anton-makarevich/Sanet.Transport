@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Sanet.Transport.Channel</RootNamespace>
     <AssemblyName>Sanet.Transport.Channel</AssemblyName>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     
     <!-- NuGet package properties -->
     <PackageId>Sanet.Transport.Channel</PackageId>
@@ -16,11 +16,16 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/anton-makarevich/Sanet.Transport</PackageProjectUrl>
     <RepositoryUrl>https://github.com/anton-makarevich/Sanet.Transport</RepositoryUrl>
-    <PackageTags>transport;messaging;channels</PackageTags>
+    <PackageTags>transport;channel;messaging</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Sanet.Transport" Version="1.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>
