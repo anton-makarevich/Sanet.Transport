@@ -2,6 +2,7 @@ using Sanet.Transport;
 using Sanet.Transport.SignalR;
 using Sanet.Transport.SignalR.Infrastructure;
 using Sanet.Transport.SignalR.Publishers;
+using Sanet.Transport.SignalR.Discovery;
 
 Console.WriteLine("Run as (S)erver or (C)lient?");
 var mode = Console.ReadKey().KeyChar;
@@ -26,12 +27,24 @@ static async Task RunServerAsync()
 {
     Console.WriteLine("Starting server...");
     SignalRHostManager? hostManager = null;
+    IDiscoveryService? discoveryService = null;
     try
     {
-        hostManager = await SignalRTransportFactory.CreateHost();
+        // Create the host manager with default port 5000
+        hostManager = new SignalRHostManager();
+        
+        // Start the host
+        await hostManager.Start();
         Console.WriteLine($"Server started at {hostManager.HubUrl}");
+
+        // Start Discovery Broadcasting
+        discoveryService = new MulticastDiscoveryService();
+        discoveryService.BroadcastPresence(hostManager.HubUrl);
+        Console.WriteLine("Broadcasting presence on the network...");
+
         Console.WriteLine("Waiting for clients...");
 
+        // Subscribe to messages
         var publisher = hostManager.Publisher;
         publisher.Subscribe(HandleIncomingMessage);
 
@@ -44,13 +57,15 @@ static async Task RunServerAsync()
     finally
     {
         Console.WriteLine("Shutting down server...");
-        hostManager?.Dispose();
+        discoveryService?.Dispose(); // Stop broadcasting and release resources
+        hostManager?.Dispose(); // Stop the web host
     }
 }
 
 static async Task RunClientAsync()
 {
     SignalRClientPublisher? client = null;
+    IDiscoveryService? discoveryService = null;
     try
     {
         Console.WriteLine("Enter server URL (leave empty to discover): ");
@@ -60,7 +75,11 @@ static async Task RunClientAsync()
         if (string.IsNullOrWhiteSpace(urlInput))
         {
             Console.WriteLine("Discovering servers...");
-            var hosts = await SignalRTransportFactory.DiscoverHosts(); // Discover for 5 seconds
+            discoveryService = new MulticastDiscoveryService();
+            var hosts = await discoveryService.DiscoverHosts(timeoutSeconds: 5); // Discover for 5 seconds
+            discoveryService.Dispose(); // Dispose after discovery is done
+            discoveryService = null;
+
             if (hosts.Count == 0)
             {
                 Console.WriteLine("No servers found on the network.");
@@ -74,8 +93,15 @@ static async Task RunClientAsync()
             hubUrl = urlInput;
         }
 
+        if (string.IsNullOrEmpty(hubUrl))
+        {
+            Console.WriteLine("No server URL specified or discovered.");
+            return;
+        }
+
         Console.WriteLine($"Connecting to {hubUrl}...");
-        client = SignalRTransportFactory.CreateClient(hubUrl);
+        // Create client publisher
+        client = new SignalRClientPublisher(hubUrl);
         client.Subscribe(HandleIncomingMessage);
 
         await client.StartAsync();
@@ -90,6 +116,7 @@ static async Task RunClientAsync()
     finally
     {
         Console.WriteLine("Disconnecting...");
+        discoveryService?.Dispose(); // Ensure disposal if discovery was interrupted
         if (client != null)
         {
             await client.DisposeAsync();
@@ -102,22 +129,30 @@ static void HandleIncomingMessage(TransportMessage message)
     // Simple differentiation: if SourceId is null or empty Guid, assume it's from the server itself (e.g., a broadcast)
     // Otherwise, it's from another client.
     var sender = message.SourceId == Guid.Empty ? "Server" : $"Client_{message.SourceId.ToString()[..4]}";
-    Console.WriteLine($"[{sender}]: {message.Payload}");
+    var originalColor = Console.ForegroundColor;
+    Console.ForegroundColor = ConsoleColor.Cyan; 
+    Console.WriteLine($"\n[{sender}]: {message.Payload}");
+    Console.ForegroundColor = originalColor;
+    Console.Write("Enter your message (or type 'exit' to quit): "); // Re-prompt user
 }
 
 static async Task RunChatLoopAsync(ITransportPublisher publisher)
 {
-    Console.WriteLine("Enter your message (or type 'exit' to quit):");
+    Console.Write("Enter your message (or type 'exit' to quit): "); // Use Write for initial prompt
     while (Console.ReadLine() is { } input && !input.Equals("exit", StringComparison.OrdinalIgnoreCase))
     {
-        if (string.IsNullOrWhiteSpace(input)) continue;
+        if (string.IsNullOrWhiteSpace(input)) 
+        {
+             Console.Write("Enter your message (or type 'exit' to quit): "); // Re-prompt if empty
+            continue;
+        }
 
         var message = new TransportMessage
         {
             MessageType = "ChatMessage",
             // Assign a consistent SourceId if this were a real client app, 
             // but for this simple console app, a new Guid is okay for demo.
-            // Server mode will broadcast, Client mode sends directly.
+            // Server mode will broadcast with Empty Guid, Client mode sends with a new Guid.
             SourceId = (publisher is SignalRClientPublisher) ? Guid.NewGuid() : Guid.Empty, 
             Payload = input,
             Timestamp = DateTime.UtcNow
@@ -126,10 +161,11 @@ static async Task RunChatLoopAsync(ITransportPublisher publisher)
         try
         {
             await publisher.PublishMessage(message);
+            Console.Write("Enter your message (or type 'exit' to quit): "); // Re-prompt after sending
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error sending message: {ex.Message}");
+            Console.WriteLine($"\nError sending message: {ex.Message}");
             // Optional: Add logic to attempt reconnection if needed
             break; // Exit loop on send error
         }
