@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using Sanet.Transport.SignalR.Network;
 
 namespace Sanet.Transport.SignalR.Discovery;
 

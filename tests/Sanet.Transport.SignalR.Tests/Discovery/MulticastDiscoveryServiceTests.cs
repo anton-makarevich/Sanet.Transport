@@ -5,6 +5,7 @@ using NSubstitute;
 using Shouldly; 
 using Xunit;
 using Sanet.Transport.SignalR.Discovery;
+using Sanet.Transport.SignalR.Network;
 
 namespace Sanet.Transport.SignalR.Tests.Discovery;
 

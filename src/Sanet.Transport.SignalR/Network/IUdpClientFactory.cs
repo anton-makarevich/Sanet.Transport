@@ -1,4 +1,6 @@
-namespace Sanet.Transport.SignalR.Discovery;
+using Sanet.Transport.SignalR.Discovery;
+
+namespace Sanet.Transport.SignalR.Network;
 
 /// <summary>
 /// Factory interface for creating IUdpClientWrapper instances.
