@@ -26,7 +26,7 @@ public static class SignalRTransportFactory
         
         if (enableDiscovery)
         {
-            var discovery = new SignalRDiscoveryService(discoveryPort);
+            var discovery = new MulticastDiscoveryService(discoveryPort);
             discovery.BroadcastPresence(hostManager.HubUrl);
         }
         
@@ -54,7 +54,7 @@ public static class SignalRTransportFactory
         int discoveryPort = 5001)
     {
         var discoveredHosts = new List<string>();
-        using var discovery = new SignalRDiscoveryService(discoveryPort);
+        using var discovery = new MulticastDiscoveryService(discoveryPort);
         
         discovery.HostDiscovered += url => 
         {
@@ -64,7 +64,7 @@ public static class SignalRTransportFactory
         
         discovery.StartListening();
         await Task.Delay(TimeSpan.FromSeconds(timeoutSeconds));
-        discovery.Stop();
+        discovery.StopListening();
         
         return discoveredHosts;
     }

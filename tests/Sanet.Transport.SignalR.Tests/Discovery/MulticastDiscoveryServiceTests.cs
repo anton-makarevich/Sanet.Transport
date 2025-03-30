@@ -8,7 +8,7 @@ using Sanet.Transport.SignalR.Discovery;
 
 namespace Sanet.Transport.SignalR.Tests.Discovery;
 
-public class SignalRDiscoveryServiceTests
+public class MulticastDiscoveryServiceTests
 {
     private const int TestPort = 15001;
     private static readonly IPAddress MulticastAddress = IPAddress.Parse("239.0.0.1");
@@ -17,9 +17,9 @@ public class SignalRDiscoveryServiceTests
     private readonly IUdpClientFactory _mockFactory;
     private readonly IUdpClientWrapper _mockSenderClient;
     private readonly IUdpClientWrapper _mockListenerClient;
-    private readonly SignalRDiscoveryService _discoveryService;
+    private readonly MulticastDiscoveryService _multicastDiscoveryService;
 
-    public SignalRDiscoveryServiceTests()
+    public MulticastDiscoveryServiceTests()
     {
         _mockFactory = Substitute.For<IUdpClientFactory>();
         _mockSenderClient = Substitute.For<IUdpClientWrapper>();
@@ -28,14 +28,14 @@ public class SignalRDiscoveryServiceTests
         _mockFactory.CreateSenderClient().Returns(_mockSenderClient);
         _mockFactory.CreateListenerClient(TestPort).Returns(_mockListenerClient);
 
-        _discoveryService = new SignalRDiscoveryService(_mockFactory, TestPort);
+        _multicastDiscoveryService = new MulticastDiscoveryService(_mockFactory, TestPort);
     }
 
     [Fact]
     public void Constructor_WithDefaultFactory_DoesNotThrow()
     {
         // Arrange & Act
-        var act = () => new SignalRDiscoveryService(TestPort);
+        var act = () => new MulticastDiscoveryService(TestPort);
 
         // Assert
         Should.NotThrow(act); 
@@ -45,7 +45,7 @@ public class SignalRDiscoveryServiceTests
     public void Constructor_WithNullFactory_ThrowsArgumentNullException()
     {
         // Arrange & Act
-        Action act = () => new SignalRDiscoveryService(null!, TestPort);
+        Action act = () => new MulticastDiscoveryService(null!, TestPort);
 
         // Assert
         var ex = Should.Throw<ArgumentNullException>(act); 
@@ -60,7 +60,7 @@ public class SignalRDiscoveryServiceTests
         var expectedData = Encoding.UTF8.GetBytes(hubUrl);
 
         // Act
-        _discoveryService.BroadcastPresence(hubUrl);
+        _multicastDiscoveryService.BroadcastPresence(hubUrl);
         await Task.Delay(100); // Allow time for the first broadcast task to start and send
 
         // Assert
@@ -74,7 +74,7 @@ public class SignalRDiscoveryServiceTests
         await _mockSenderClient.Received(2).SendAsync(Arg.Any<byte[]>(), expectedData.Length, _expectedMulticastEndpoint);
         
         // Cleanup
-        _discoveryService.Stop();
+        _multicastDiscoveryService.StopBroadcasting();
         await Task.Delay(100); // Allow time for task to potentially stop
     }
     
@@ -85,8 +85,8 @@ public class SignalRDiscoveryServiceTests
         var hubUrl = "http://localhost:5000/hub";
         
         // Act
-        _discoveryService.BroadcastPresence(hubUrl);
-        _discoveryService.BroadcastPresence(hubUrl); // Call again
+        _multicastDiscoveryService.BroadcastPresence(hubUrl);
+        _multicastDiscoveryService.BroadcastPresence(hubUrl); // Call again
         
         await Task.Delay(100); // Add delay to allow Task.Run to execute
         
@@ -95,7 +95,7 @@ public class SignalRDiscoveryServiceTests
         _mockFactory.Received(1).CreateSenderClient(); // Ensure sender client created only once
         
         // Cleanup needed to avoid test interference if broadcast task keeps running
-        _discoveryService.Stop();
+        _multicastDiscoveryService.StopBroadcasting();
     }
 
     [Fact]
@@ -106,7 +106,7 @@ public class SignalRDiscoveryServiceTests
         _mockListenerClient.ReceiveAsync().Returns(new TaskCompletionSource<UdpReceiveResult>().Task);
 
         // Act
-        _discoveryService.StartListening();
+        _multicastDiscoveryService.StartListening();
         await Task.Delay(100); // Allow time for the listener task to start
 
         // Assert
@@ -123,14 +123,14 @@ public class SignalRDiscoveryServiceTests
         var receivedData = Encoding.UTF8.GetBytes(hubUrl);
         var udpResult = new UdpReceiveResult(receivedData, new IPEndPoint(IPAddress.Any, 0));
         string? discoveredUrl = null;
-        _discoveryService.HostDiscovered += url => discoveredUrl = url;
+        _multicastDiscoveryService.HostDiscovered += url => discoveredUrl = url;
 
         // Setup ReceiveAsync to return data once, then block indefinitely 
         var receiveTcs = new TaskCompletionSource<UdpReceiveResult>();
         _mockListenerClient.ReceiveAsync().Returns(Task.FromResult(udpResult), receiveTcs.Task);
 
         // Act
-        _discoveryService.StartListening();
+        _multicastDiscoveryService.StartListening();
         await Task.Delay(100); // Allow ReceiveAsync to complete
 
         // Assert
@@ -147,50 +147,14 @@ public class SignalRDiscoveryServiceTests
         _mockListenerClient.ReceiveAsync().Returns(new TaskCompletionSource<UdpReceiveResult>().Task);
         
         // Act
-        _discoveryService.StartListening();
+        _multicastDiscoveryService.StartListening();
         await Task.Delay(50); // Small delay
-        _discoveryService.StartListening(); // Call again
+        _multicastDiscoveryService.StartListening(); // Call again
         await Task.Delay(50); 
         
         // Assert
         _mockFactory.Received(1).CreateListenerClient(TestPort); // Ensure listener client created only once
         _mockListenerClient.Received(1).JoinMulticastGroup(MulticastAddress);
-    }
-
-    [Fact]
-    public async Task Stop_StopsBroadcastingAndListening_DisposesListener()
-    {
-        // Arrange
-        var hubUrl = "http://localhost:5000/hub";
-        var receiveTcs = new TaskCompletionSource<UdpReceiveResult>();
-        _mockListenerClient.ReceiveAsync().Returns(receiveTcs.Task); // Block listener
-
-        _discoveryService.BroadcastPresence(hubUrl);
-        _discoveryService.StartListening();
-        await Task.Delay(100); // Let loops start
-        
-        // Assert startup conditions (optional but good)
-        await _mockSenderClient.Received(1).SendAsync(Arg.Any<byte[]>(), Arg.Any<int>(), Arg.Any<IPEndPoint>());
-        _mockListenerClient.Received(1).JoinMulticastGroup(MulticastAddress);
-
-        // Act
-        _discoveryService.Stop();
-        await Task.Delay(100); // Allow time for stop actions
-        
-        // Simulate ReceiveAsync throwing ObjectDisposedException because client was closed
-        receiveTcs.SetException(new ObjectDisposedException("UdpClient"));
-        await Task.Delay(100); // Allow task exception propagation
-
-        // Assert stopping actions
-        _mockListenerClient.Received(1).DropMulticastGroup(MulticastAddress);
-        _mockListenerClient.Received(1).Close();
-        _mockListenerClient.Received(1).Dispose();
-        
-        // Check broadcast stopped (won't send again after stop)
-        var initialSendCount = _mockSenderClient.ReceivedCalls().Count(c => c.GetMethodInfo().Name == "SendAsync");
-        await Task.Delay(5100); // Wait broadcast interval
-        var finalSendCount = _mockSenderClient.ReceivedCalls().Count(c => c.GetMethodInfo().Name == "SendAsync");
-        finalSendCount.ShouldBe(initialSendCount); // Use Shouldly
     }
     
     [Fact]
@@ -200,11 +164,11 @@ public class SignalRDiscoveryServiceTests
         var receiveTcs = new TaskCompletionSource<UdpReceiveResult>();
         _mockListenerClient.ReceiveAsync().Returns(receiveTcs.Task); // Block listener
 
-        _discoveryService.StartListening();
+        _multicastDiscoveryService.StartListening();
         await Task.Delay(100); // Let loop start
         
         // Act
-        _discoveryService.Dispose();
+        _multicastDiscoveryService.Dispose();
         await Task.Delay(100); // Allow time for stop/dispose actions
         
         // Simulate ReceiveAsync throwing ObjectDisposedException because client was closed
@@ -217,8 +181,8 @@ public class SignalRDiscoveryServiceTests
         _mockListenerClient.Received(1).Dispose();
         
         // Attempting actions after dispose should throw
-        Should.Throw<ObjectDisposedException>(() => _discoveryService.StartListening()); // Use Shouldly
-        Should.Throw<ObjectDisposedException>(() => _discoveryService.BroadcastPresence("test")); // Use Shouldly
+        Should.Throw<ObjectDisposedException>(() => _multicastDiscoveryService.StartListening()); // Use Shouldly
+        Should.Throw<ObjectDisposedException>(() => _multicastDiscoveryService.BroadcastPresence("test")); // Use Shouldly
     }
 
     [Fact]
@@ -236,7 +200,7 @@ public class SignalRDiscoveryServiceTests
             );
 
         // Act
-        _discoveryService.StartListening();
+        _multicastDiscoveryService.StartListening();
         // Wait long enough for the exception path (includes 1s delay) and the next call
         await Task.Delay(1500); 
 
@@ -257,7 +221,7 @@ public class SignalRDiscoveryServiceTests
         var sendCounter = 0;
         
         _mockSenderClient.SendAsync(Arg.Any<byte[]>(), Arg.Any<int>(), Arg.Any<IPEndPoint>())
-            .Returns(async callInfo => 
+            .Returns(async _ => 
             { 
                 sendCounter++;
                 if (sendCounter == 1)
@@ -268,12 +232,12 @@ public class SignalRDiscoveryServiceTests
             });
 
         // Act
-        _discoveryService.BroadcastPresence(hubUrl);
+        _multicastDiscoveryService.BroadcastPresence(hubUrl);
         // Wait for first send (throws), delay in catch (5s), next send attempt
         await Task.Delay(5500); 
 
         // Assert
         // Verify SendAsync was called at least twice: once throwing, once successful
-        await SubstituteExtensions.Received(_mockSenderClient, 2).SendAsync(Arg.Any<byte[]>(), expectedData.Length, _expectedMulticastEndpoint);
+        await _mockSenderClient.Received(2).SendAsync(Arg.Any<byte[]>(), expectedData.Length, _expectedMulticastEndpoint);
     }
 }

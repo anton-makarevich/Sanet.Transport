@@ -6,7 +6,7 @@ namespace Sanet.Transport.SignalR.Discovery;
 /// <summary>
 /// Provides network discovery for SignalR hosts on the local network using UDP Multicast
 /// </summary>
-public class SignalRDiscoveryService : IDisposable
+public class MulticastDiscoveryService : IDiscoveryService
 {
     private const int DefaultDiscoveryPort = 5001;
     private static readonly IPAddress MulticastAddress = IPAddress.Parse("239.0.0.1"); // Multicast address, we can make it configurable
@@ -26,7 +26,7 @@ public class SignalRDiscoveryService : IDisposable
     /// Creates a new instance of the SignalRDiscoveryService using the default UdpClientFactory.
     /// </summary>
     /// <param name="discoveryPort">Optional port to use for discovery (default: 5001)</param>
-    public SignalRDiscoveryService(int discoveryPort = DefaultDiscoveryPort)
+    public MulticastDiscoveryService(int discoveryPort = DefaultDiscoveryPort)
         : this(new UdpClientFactory(), discoveryPort)
     {
     }
@@ -37,7 +37,7 @@ public class SignalRDiscoveryService : IDisposable
     /// </summary>
     /// <param name="udpClientFactory">The factory to create UDP client wrappers.</param>
     /// <param name="discoveryPort">Optional port to use for discovery (default: 5001)</param>
-    public SignalRDiscoveryService(IUdpClientFactory udpClientFactory, int discoveryPort = DefaultDiscoveryPort)
+    public MulticastDiscoveryService(IUdpClientFactory udpClientFactory, int discoveryPort = DefaultDiscoveryPort)
     {
         _udpClientFactory = udpClientFactory ?? throw new ArgumentNullException(nameof(udpClientFactory));
         _discoveryPort = discoveryPort;
@@ -50,7 +50,7 @@ public class SignalRDiscoveryService : IDisposable
     public void BroadcastPresence(string hubUrl)
     {
         if (_isDisposed)
-            throw new ObjectDisposedException(nameof(SignalRDiscoveryService));
+            throw new ObjectDisposedException(nameof(MulticastDiscoveryService));
 
         if (_isBroadcasting) return; // Prevent multiple broadcast loops
         _isBroadcasting = true;
@@ -87,7 +87,7 @@ public class SignalRDiscoveryService : IDisposable
     public void StartListening()
     {
         if (_isDisposed)
-            throw new ObjectDisposedException(nameof(SignalRDiscoveryService));
+            throw new ObjectDisposedException(nameof(MulticastDiscoveryService));
 
         if (_isListening) return; // Prevent multiple listener loops
 
@@ -148,16 +148,20 @@ public class SignalRDiscoveryService : IDisposable
     }
 
     /// <summary>
-    /// Stops broadcasting and listening
+    /// Stops listening for host broadcasts
     /// </summary>
-    public void Stop()
+    public void StopListening()
+    {
+        _isListening = false; // Signal listening loop to stop
+        CloseAndDisposeListener();
+    }
+
+    /// <summary>
+    /// Stops broadcasting this host's presence
+    /// </summary>
+    public void StopBroadcasting()
     {
         _isBroadcasting = false;
-        _isListening = false; // Signal listening loop to stop
-        
-        // Closing the listener client will cause ReceiveAsync to throw ObjectDisposedException,
-        // which is handled in the listening loop to break out.
-        CloseAndDisposeListener();
     }
 
     /// <summary>
@@ -177,7 +181,8 @@ public class SignalRDiscoveryService : IDisposable
         if (disposing)
         {
             // Stop loops and dispose managed resources (UDP client)
-            Stop(); 
+            StopListening();
+            StopBroadcasting();
         }
 
         // Dispose unmanaged resources here if any
