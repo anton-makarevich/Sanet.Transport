@@ -20,6 +20,8 @@ Here's how to create a host application that other clients can connect to:
 ```csharp
 using Sanet.Transport;
 using Sanet.Transport.SignalR;
+using Sanet.Transport.SignalR.Infrastructure;
+using Sanet.Transport.SignalR.Discovery;
 
 namespace AvaloniaHostApp
 {
@@ -27,17 +29,25 @@ namespace AvaloniaHostApp
     {
         private SignalRHostManager _hostManager;
         private ITransportPublisher _publisher;
+        private IDiscoveryService _discoveryService;
 
         public async Task InitializeHost()
         {
-            // Create and start a SignalR host (defaults to http://0.0.0.0:5000)
-            _hostManager = await SignalRTransportFactory.CreateHost();
+            // Create a SignalR host (defaults to port 5000)
+            _hostManager = new SignalRHostManager();
+            
+            // Start the host
+            await _hostManager.Start();
             
             // Get the publisher to send/receive messages
             _publisher = _hostManager.Publisher;
             
             // Subscribe to incoming messages
             _publisher.Subscribe(HandleIncomingMessage);
+            
+            // Start broadcasting presence on the network
+            _discoveryService = new MulticastDiscoveryService();
+            _discoveryService.BroadcastPresence(_hostManager.HubUrl);
         }
         
         private void HandleIncomingMessage(TransportMessage message)
@@ -63,6 +73,7 @@ namespace AvaloniaHostApp
         
         public void Cleanup()
         {
+            _discoveryService?.Dispose();
             _hostManager?.Dispose();
         }
     }
@@ -76,17 +87,23 @@ Here's how to create a client application that connects to a host:
 ```csharp
 using Sanet.Transport;
 using Sanet.Transport.SignalR;
+using Sanet.Transport.SignalR.Publishers;
+using Sanet.Transport.SignalR.Discovery;
 
 namespace AvaloniaClientApp
 {
     public class MainViewModel
     {
         private SignalRClientPublisher _client;
+        private IDiscoveryService _discoveryService;
         
         public async Task<bool> ConnectToHost()
         {
-            // Option 1: Discover hosts automatically
-            var hosts = await SignalRTransportFactory.DiscoverHosts();
+            // Discover hosts automatically
+            _discoveryService = new MulticastDiscoveryService();
+            var hosts = await _discoveryService.DiscoverHosts(timeoutSeconds: 5);
+            _discoveryService.Dispose();
+            
             if (hosts.Count == 0)
             {
                 Console.WriteLine("No hosts found on the network");
@@ -102,13 +119,13 @@ namespace AvaloniaClientApp
             try
             {
                 // Create a client publisher
-                _client = SignalRTransportFactory.CreateClient(hubUrl);
+                _client = new SignalRClientPublisher(hubUrl);
                 
                 // Subscribe to incoming messages
                 _client.Subscribe(HandleIncomingMessage);
                 
                 // Start the connection
-                await _client.Start();
+                await _client.StartAsync();
                 
                 return true;
             }
@@ -149,7 +166,7 @@ namespace AvaloniaClientApp
         {
             if (_client != null)
             {
-                await _client.Dispose();
+                await _client.DisposeAsync();
             }
         }
     }
@@ -159,13 +176,12 @@ namespace AvaloniaClientApp
 ## Benefits
 
 1. **Clean Architecture**: Your Avalonia apps don't need to reference ASP.NET Core directly
-2. **Simple API**: The factory pattern makes it easy to create hosts and clients
-3. **Network Discovery**: Clients can automatically find hosts on the LAN
+2. **Simple API**: The library handles all the complexity of SignalR setup
+3. **Network Discovery**: Clients can automatically find hosts on the LAN using `MulticastDiscoveryService` (only true for simple networks)
 4. **Consistent Interface**: Uses the same `ITransportPublisher` interface as other transport implementations
 
 ## Notes
 
 - The host will be accessible at `http://[ip]:5000/transporthub` by default
-- You can customize the host URL by passing a different URL to `CreateHost()`
-- Discovery uses UDP broadcasts on port 5001
-- For security in production environments, consider adding authentication
+- You can customize the port by passing it to the `SignalRHostManager` constructor
+- Discovery uses UDP broadcast or multicast (there are both implementations) on port 5001 by default

@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 
-namespace Sanet.Transport.SignalR.Discovery;
+namespace Sanet.Transport.SignalR.Network;
 
 /// <summary>
 /// Concrete implementation of IUdpClientWrapper using System.Net.Sockets.UdpClient.

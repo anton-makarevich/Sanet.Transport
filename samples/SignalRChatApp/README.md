@@ -54,13 +54,13 @@ This sample demonstrates the core functionality of the `Sanet.Transport.SignalR`
 
 ## Implementation Details
 
-- Uses `SignalRTransportFactory` to create hosts and clients
-- Demonstrates network discovery with `DiscoverHosts()`
-- Shows how to subscribe to and publish messages
-- Handles connection and error scenarios
+- Shows manual setup of `SignalRHostManager` (Server) and `SignalRClientPublisher` (Client)
+- Demonstrates network discovery using `MulticastDiscoveryService` and `DiscoverHosts()`
+- Shows how to subscribe to and publish messages using `ITransportPublisher`
+- Handles connection, disposal, and basic error scenarios
 
 ## Notes
 
 - The server binds to all network interfaces (0.0.0.0) but automatically advertises itself using a routable IP address
-- The `SignalRHostManager` now resolves the machine's actual IP address when providing the hub URL
+- The `SignalRHostManager` resolves the machine's actual IP address when providing the hub URL
 - This ensures clients can connect to the server without manual URL adjustments

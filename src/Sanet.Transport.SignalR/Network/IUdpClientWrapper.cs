@@ -1,8 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
-using System.Threading.Tasks;
 
-namespace Sanet.Transport.SignalR.Discovery;
+namespace Sanet.Transport.SignalR.Network;
 
 /// <summary>
 /// Interface abstracting UdpClient operations for testability.
