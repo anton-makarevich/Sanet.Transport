@@ -9,7 +9,7 @@
     
     <!-- NuGet package properties -->
     <PackageId>Sanet.Transport</PackageId>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <Authors>Anton Makarevich</Authors>
     <Company>Sanet</Company>
     <Description>Core transport abstractions for message-based communication</Description>
@@ -17,6 +17,11 @@
     <PackageProjectUrl>https://github.com/anton-makarevich/Sanet.Transport</PackageProjectUrl>
     <RepositoryUrl>https://github.com/anton-makarevich/Sanet.Transport</RepositoryUrl>
     <PackageTags>transport;messaging</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
 </Project>

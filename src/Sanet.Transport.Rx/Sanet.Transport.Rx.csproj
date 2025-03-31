@@ -9,19 +9,24 @@
     
     <!-- NuGet package properties -->
     <PackageId>Sanet.Transport.Rx</PackageId>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <Authors>Anton Makarevich</Authors>
     <Company>Sanet</Company>
     <Description>Reactive Extensions implementation of the Sanet.Transport abstractions</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/anton-makarevich/Sanet.Transport</PackageProjectUrl>
     <RepositoryUrl>https://github.com/anton-makarevich/Sanet.Transport</RepositoryUrl>
-    <PackageTags>transport;messaging;reactive;rx</PackageTags>
+    <PackageTags>transport;rx;messaging</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="System.Reactive" Version="6.0.1" />
     <PackageReference Include="Sanet.Transport" Version="1.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>

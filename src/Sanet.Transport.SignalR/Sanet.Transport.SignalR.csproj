@@ -11,7 +11,7 @@
     
     <!-- NuGet package properties -->
     <PackageId>Sanet.Transport.SignalR</PackageId>
-    <Version>0.3.1</Version>
+    <Version>0.3.2</Version>
     <Authors>Anton Makarevich</Authors>
     <Company>Sanet</Company>
     <Description>SignalR implementation of the Sanet.Transport abstractions</Description>
@@ -19,6 +19,7 @@
     <PackageProjectUrl>https://github.com/anton-makarevich/Sanet.Transport</PackageProjectUrl>
     <RepositoryUrl>https://github.com/anton-makarevich/Sanet.Transport</RepositoryUrl>
     <PackageTags>transport;signalr;messaging</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -33,8 +34,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
     <Folder Include="Publishers\" />
     <Folder Include="Infrastructure\" />
+    <Folder Include="Discovery\" />
   </ItemGroup>
 
 </Project>
