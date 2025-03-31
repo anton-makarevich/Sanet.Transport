@@ -157,15 +157,6 @@ public class BroadcastDiscoveryService : IDiscoveryService
     }
 
     /// <summary>
-    /// Stops broadcasting and listening
-    /// </summary>
-    public void Stop()
-    {
-        StopListening();
-        StopBroadcasting();
-    }
-
-    /// <summary>
     /// Disposes the discovery service
     /// </summary>
     public void Dispose()

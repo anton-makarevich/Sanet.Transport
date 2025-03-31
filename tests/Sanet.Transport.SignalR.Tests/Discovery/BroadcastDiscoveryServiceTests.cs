@@ -235,4 +235,39 @@ public class BroadcastDiscoveryServiceTests
         // Verify SendAsync was called at least twice: once throwing, once successful
         await _mockSenderClient.Received(2).SendAsync(Arg.Any<byte[]>(), expectedData.Length, _expectedBroadcastEndpoint);
     }
+    
+    [Fact]
+    public async Task StartListening_FailsToCreateListener_HandlesException()
+    {
+        // Arrange
+        _mockFactory.CreateListenerClient(TestPort).Returns(_ => throw new SocketException());
+        
+        // Act
+        ((IDiscoveryService)_broadcastDiscoveryService).StartListening();
+        await Task.Delay(100); // Allow time for the exception to be handled
+        
+        // Assert
+        // Verify the factory was called but no listener operations were performed
+        _mockFactory.Received(1).CreateListenerClient(TestPort);
+        await _mockListenerClient.DidNotReceive().ReceiveAsync();
+    }
+    
+    [Fact]
+    public async Task CloseAndDisposeListener_HandlesExceptionWhenClosing()
+    {
+        // Arrange
+        _mockListenerClient.ReceiveAsync().Returns(new TaskCompletionSource<UdpReceiveResult>().Task);
+        _mockListenerClient.When(x => x.Close()).Do(_ => throw new SocketException());
+        
+        // Act
+        ((IDiscoveryService)_broadcastDiscoveryService).StartListening();
+        await Task.Delay(100); // Allow time for the listener task to start
+        ((IDiscoveryService)_broadcastDiscoveryService).StopListening(); // This will call CloseAndDisposeListener
+        await Task.Delay(100); // Allow time for the exception to be handled
+        
+        // Assert
+        // Verify Close was called and Dispose was still called despite the exception
+        _mockListenerClient.Received(1).Close();
+        _mockListenerClient.Received(1).Dispose();
+    }
 }
