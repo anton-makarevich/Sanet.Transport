@@ -89,13 +89,16 @@ public class SignalRHostManager : IDisposable
                 // Get the machine's IP address that's not a loopback address
                 foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
                 {
-                    // Skip anything that isn't Up or isn't Ethernet/Wireless
-                    if (ni.OperationalStatus != OperationalStatus.Up ||
-                        (ni.NetworkInterfaceType != NetworkInterfaceType.Wireless80211 &&
-                         ni.NetworkInterfaceType != NetworkInterfaceType.Ethernet))
+                    if (ni.OperationalStatus != OperationalStatus.Up)
                         continue;
 
                     var ipProps = ni.GetIPProperties();
+
+                    // Skip if no default gateway
+                    var hasGateway = ipProps.GatewayAddresses.Any(g => g.Address.AddressFamily == AddressFamily.InterNetwork);
+                    if (!hasGateway)
+                        continue;
+
                     foreach (var ip in ipProps.UnicastAddresses)
                     {
                         if (ip.Address.AddressFamily == AddressFamily.InterNetwork)
