@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.SignalR;
-using Sanet.Transport.SignalR.Infrastructure;
+using Sanet.Transport.SignalR.Server.Infrastructure;
 
-namespace Sanet.Transport.SignalR.Publishers;
+namespace Sanet.Transport.SignalR.Server.Publishers;
 
 /// <summary>
 /// Server-side implementation of ITransportPublisher using SignalR

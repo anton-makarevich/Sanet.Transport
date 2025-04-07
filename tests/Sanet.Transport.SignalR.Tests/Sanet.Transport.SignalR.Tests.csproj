@@ -29,7 +29,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Sanet.Transport.SignalR\Sanet.Transport.SignalR.csproj" />
+    <ProjectReference Include="..\..\src\Sanet.Transport.SignalR.Server\Sanet.Transport.SignalR.Server.csproj" />
+    <ProjectReference Include="..\..\src\Sanet.Transport.SignalR.Client\Sanet.Transport.SignalR.Client.csproj" />
     <ProjectReference Include="..\..\src\Sanet.Transport\Sanet.Transport.csproj" />
   </ItemGroup>
 

@@ -2,10 +2,10 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using NSubstitute;
+using Sanet.Transport.SignalR.Client.Discovery;
+using Sanet.Transport.SignalR.Client.Network;
 using Shouldly; 
 using Xunit;
-using Sanet.Transport.SignalR.Discovery;
-using Sanet.Transport.SignalR.Network;
 
 namespace Sanet.Transport.SignalR.Tests.Discovery;
 

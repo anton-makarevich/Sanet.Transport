@@ -1,9 +1,9 @@
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using Microsoft.AspNetCore.SignalR;
-using Sanet.Transport.SignalR.Publishers;
+using Sanet.Transport.SignalR.Server.Publishers;
 
-namespace Sanet.Transport.SignalR.Infrastructure;
+namespace Sanet.Transport.SignalR.Server.Infrastructure;
 
 /// <summary>
 /// Manages a self-contained SignalR host that can be embedded in any application

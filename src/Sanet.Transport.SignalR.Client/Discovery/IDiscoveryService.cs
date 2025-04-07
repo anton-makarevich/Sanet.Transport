@@ -1,4 +1,4 @@
-namespace Sanet.Transport.SignalR.Discovery
+namespace Sanet.Transport.SignalR.Client.Discovery
 {
     /// <summary>
     /// Defines the contract for a service that discovers SignalR hosts on the network.

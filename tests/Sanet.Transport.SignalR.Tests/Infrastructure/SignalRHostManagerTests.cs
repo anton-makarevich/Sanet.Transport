@@ -1,5 +1,5 @@
-using Sanet.Transport.SignalR.Infrastructure;
-using Sanet.Transport.SignalR.Publishers;
+using Sanet.Transport.SignalR.Server.Infrastructure;
+using Sanet.Transport.SignalR.Server.Publishers;
 using Shouldly;
 using Xunit;
 

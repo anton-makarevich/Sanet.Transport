@@ -1,6 +1,4 @@
-using Sanet.Transport.SignalR.Discovery;
-
-namespace Sanet.Transport.SignalR.Network;
+namespace Sanet.Transport.SignalR.Client.Network;
 
 /// <summary>
 /// Concrete factory for creating UdpClientWrapper instances.
