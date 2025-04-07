@@ -1,8 +1,9 @@
 using Sanet.Transport;
 using Sanet.Transport.SignalR;
-using Sanet.Transport.SignalR.Infrastructure;
-using Sanet.Transport.SignalR.Publishers;
-using Sanet.Transport.SignalR.Discovery;
+using Sanet.Transport.SignalR.Server.Infrastructure;
+using Sanet.Transport.SignalR.Server.Publishers;
+using Sanet.Transport.SignalR.Client.Publishers;
+using Sanet.Transport.SignalR.Client.Discovery;
 
 Console.WriteLine("Run as (S)erver or (C)lient?");
 var mode = Console.ReadKey().KeyChar;
