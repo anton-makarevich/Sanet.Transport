@@ -1,3 +1,5 @@
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using Microsoft.AspNetCore.SignalR;
 using Sanet.Transport.SignalR.Publishers;
 
@@ -85,15 +87,26 @@ public class SignalRHostManager : IDisposable
             try
             {
                 // Get the machine's IP address that's not a loopback address
-                var host = System.Net.Dns.GetHostEntry(System.Net.Dns.GetHostName());
-                foreach (var ip in host.AddressList)
+                foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
                 {
-                    // Prefer IPv4 addresses on the LAN
-                    if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                    // Skip anything that isn't Up or isn't Ethernet/Wireless
+                    if (ni.OperationalStatus != OperationalStatus.Up ||
+                        (ni.NetworkInterfaceType != NetworkInterfaceType.Wireless80211 &&
+                         ni.NetworkInterfaceType != NetworkInterfaceType.Ethernet))
+                        continue;
+
+                    var ipProps = ni.GetIPProperties();
+                    foreach (var ip in ipProps.UnicastAddresses)
                     {
-                        hostAddress = ip.ToString();
-                        break;
+                        if (ip.Address.AddressFamily == AddressFamily.InterNetwork)
+                        {
+                            hostAddress = ip.Address.ToString();
+                            break;
+                        }
                     }
+
+                    if (hostAddress != null)
+                        break;
                 }
             }
             catch (Exception ex)
