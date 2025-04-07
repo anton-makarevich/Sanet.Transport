@@ -1,4 +1,4 @@
-using Sanet.Transport.SignalR.Publishers;
+using Sanet.Transport.SignalR.Client.Publishers;
 using Shouldly;
 using Xunit;
 

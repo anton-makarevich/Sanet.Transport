@@ -1,4 +1,4 @@
-using Sanet.Transport.SignalR.Infrastructure;
+using Sanet.Transport.SignalR.Server.Infrastructure;
 using Shouldly;
 using Xunit;
 
