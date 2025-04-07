@@ -1,29 +1,36 @@
-# Sanet.Transport.SignalR
+# Sanet.Transport.SignalR.Server
 
-ASP.NET Core SignalR implementation of the Sanet.Transport abstractions for real-time communication over networks.
+Provides the server-side components (SignalR Hub, Host Manager, Server Publisher) for the Sanet.Transport SignalR implementation. This package includes the necessary ASP.NET Core dependencies to host a SignalR hub.
 
-[![NuGet](https://img.shields.io/nuget/v/Sanet.Transport.SignalR?logo=nuget)](https://www.nuget.org/packages/Sanet.Transport.SignalR/)
+[![NuGet](https://img.shields.io/nuget/v/Sanet.Transport.SignalR.Server?logo=nuget)](https://www.nuget.org/packages/Sanet.Transport.SignalR.Server/)
 
 ## Overview
 
-Sanet.Transport.SignalR provides an implementation of the `ITransportPublisher` interface using ASP.NET Core SignalR, enabling real-time communication between applications over a network. The library encapsulates all SignalR infrastructure, keeping client applications clean from web server dependencies.
+This library contains the server infrastructure required to host a SignalR hub for `Sanet.Transport`. It uses `Microsoft.NET.Sdk.Web` and includes:
+
+- `TransportHub`: The core SignalR Hub.
+- `SignalRHostManager`: Manages a self-contained SignalR host.
+- `SignalRServerPublisher`: Implements `ITransportPublisher` for the server-side, broadcasting messages to connected clients.
+
+**Note:** This package depends on `Sanet.Transport.SignalR.Client` for network discovery broadcasting functionality.
 
 ## Features
 
-- Real-time communication between applications over a network
-- Client-server architecture with separate client and server publishers
-- Automatic host discovery on simple local networks
-- Self-contained SignalR infrastructure (no need to add ASP.NET Core to client apps)
+- Host a self-contained SignalR Hub.
+- Manage the SignalR host lifecycle.
+- Broadcast `TransportMessage` objects to all connected clients.
+- Receive messages from clients.
+- Integrates with network discovery (via `Sanet.Transport.SignalR.Client`).
 
 ## Installation
 
 ```
-dotnet add package Sanet.Transport.SignalR
+dotnet add package Sanet.Transport.SignalR.Server
 ```
 
 Or via the Package Manager Console:
 ```
-Install-Package Sanet.Transport.SignalR
+Install-Package Sanet.Transport.SignalR.Server
 ```
 
 ## Usage
@@ -37,6 +44,10 @@ var hostManager = await SignalRTransportFactory.CreateHostAsync(port: 5000);
 // Get the server-side publisher
 ITransportPublisher serverPublisher = hostManager.Publisher;
 
+// (Optional) Make the host discoverable using the discovery service from the Client package
+// var discoveryService = new Sanet.Transport.SignalR.Client.Discovery.BroadcastDiscoveryService(); 
+// discoveryService.BroadcastPresence(hostManager.HubUrl); 
+
 // Subscribe to messages from clients
 serverPublisher.Subscribe(message => {
     Console.WriteLine($"Server received: {message.CommandType}");
@@ -49,41 +60,6 @@ serverPublisher.Subscribe(message => {
         Timestamp = DateTime.UtcNow
     });
 });
-```
-
-### Client-side
-
-```csharp
-// Discover hosts on the network
-var hosts = await discoveryService.DiscoverHostsAsync(timeoutSeconds: 5);
-
-// Connect to the first discovered host
-if (hosts.Count > 0)
-{
-    // Create a client publisher connected to the host
-    ITransportPublisher clientPublisher = SignalRTransportFactory.CreateClient(hosts[0]);
-    
-    // Subscribe to messages from the server
-    clientPublisher.Subscribe(message => {
-        Console.WriteLine($"Client received: {message.CommandType}");
-    });
-    
-    // Send a message to the server
-    clientPublisher.PublishMessage(new TransportMessage {
-        CommandType = "ClientCommand",
-        SourceId = Guid.NewGuid(),
-        Payload = "{\"client\": \"data\"}",
-        Timestamp = DateTime.UtcNow
-    });
-}
-```
-
-### Manual Connection (Without Discovery)
-
-```csharp
-// Connect to a known host
-var hostInfo = new HostInfo { Url = "http://192.168.1.100:5000" };
-ITransportPublisher clientPublisher = SignalRTransportFactory.CreateClient(hostInfo);
 ```
 
 ## License
