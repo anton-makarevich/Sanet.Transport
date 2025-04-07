@@ -10,7 +10,8 @@ A lightweight transport layer for message passing between distributed systems.
 | Sanet.Transport | [![NuGet](https://img.shields.io/nuget/v/Sanet.Transport?logo=nuget)](https://www.nuget.org/packages/Sanet.Transport/)                 |
 | Sanet.Transport.Rx | [![NuGet](https://img.shields.io/nuget/v/Sanet.Transport.Rx?logo=nuget)](https://www.nuget.org/packages/Sanet.Transport.Rx/)           |
 | Sanet.Transport.Channel | [![NuGet](https://img.shields.io/nuget/v/Sanet.Transport.Channel?logo=nuget)](https://www.nuget.org/packages/Sanet.Transport.Channel/) |
-| Sanet.Transport.SignalR | [![NuGet](https://img.shields.io/nuget/v/Sanet.Transport.SignalR?logo=nuget)](https://www.nuget.org/packages/Sanet.Transport.SignalR/) |
+| Sanet.Transport.SignalR | [![NuGet](https://img.shields.io/nuget/v/Sanet.Transport.SignalR.Client?logo=nuget)](https://www.nuget.org/packages/Sanet.Transport.SignalR.Client/) |
+| Sanet.Transport.SignalR | [![NuGet](https://img.shields.io/nuget/v/Sanet.Transport.SignalR.Server?logo=nuget)](https://www.nuget.org/packages/Sanet.Transport.SignalR.Server/) |
 
 ## Overview
 
