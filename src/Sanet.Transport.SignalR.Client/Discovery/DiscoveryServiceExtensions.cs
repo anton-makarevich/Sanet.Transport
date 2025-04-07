@@ -1,4 +1,4 @@
-﻿namespace Sanet.Transport.SignalR.Discovery;
+﻿namespace Sanet.Transport.SignalR.Client.Discovery;
 
 public static class DiscoveryServiceExtensions
 {

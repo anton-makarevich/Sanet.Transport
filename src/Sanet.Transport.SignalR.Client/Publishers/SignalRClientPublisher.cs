@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.SignalR.Client;
 
-namespace Sanet.Transport.SignalR.Publishers;
+namespace Sanet.Transport.SignalR.Client.Publishers;
 
 /// <summary>
 /// Client-side implementation of ITransportPublisher using SignalR

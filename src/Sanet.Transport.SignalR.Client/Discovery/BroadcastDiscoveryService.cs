@@ -1,8 +1,8 @@
 using System.Net;
 using System.Text;
-using Sanet.Transport.SignalR.Network;
+using Sanet.Transport.SignalR.Client.Network;
 
-namespace Sanet.Transport.SignalR.Discovery;
+namespace Sanet.Transport.SignalR.Client.Discovery;
     
 /// <summary>
 /// Provides network discovery for SignalR hosts on the local network

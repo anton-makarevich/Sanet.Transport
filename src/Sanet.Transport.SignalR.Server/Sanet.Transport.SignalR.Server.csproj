@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk.Web"> <!-- Server uses Sdk.Web -->
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <OutputType>Library</OutputType> <!-- It's a library, not an executable web app -->
+    <IsPackable>true</IsPackable>
+    <RootNamespace>Sanet.Transport.SignalR.Server</RootNamespace>
+    <AssemblyName>Sanet.Transport.SignalR.Server</AssemblyName>
+    
+    <!-- NuGet package properties -->
+    <PackageId>Sanet.Transport.SignalR.Server</PackageId>
+    <Version>0.5.0</Version> <!-- Consider resetting version -->
+    <Authors>Anton Makarevich</Authors>
+    <Company>Sanet</Company>
+    <Description>Server components for SignalR implementation of the Sanet.Transport abstractions. Includes Hub, HostManager and server publisher.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/anton-makarevich/Sanet.Transport</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/anton-makarevich/Sanet.Transport</RepositoryUrl>
+    <PackageTags>transport;signalr;messaging;server;hub</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile> 
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <ProjectReference Include="..\Sanet.Transport\Sanet.Transport.csproj" />
+    <!-- Server depends on Client for Discovery broadcasting -->
+    <ProjectReference Include="..\Sanet.Transport.SignalR.Client\Sanet.Transport.SignalR.Client.csproj" />
+  </ItemGroup>
+
+   <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Sanet.Transport.SignalR.Tests</_Parameter1> <!-- Adjust if test project name changes -->
+    </AssemblyAttribute>
+     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Sanet.Transport.SignalR.Server.Tests</_Parameter1> <!-- For new server tests -->
+    </AssemblyAttribute>
+  </ItemGroup>
+  
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>
