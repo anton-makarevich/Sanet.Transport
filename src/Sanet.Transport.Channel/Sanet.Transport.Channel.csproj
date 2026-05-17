@@ -21,7 +21,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Sanet.Transport" Version="1.0.1" />
+    <PackageReference Include="Sanet.Transport" Version="1.0.2" />
   </ItemGroup>
 
   <ItemGroup>
