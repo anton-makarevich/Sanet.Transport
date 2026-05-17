@@ -1,12 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>Sanet.Transport.Channel</RootNamespace>
     <AssemblyName>Sanet.Transport.Channel</AssemblyName>
-    <Version>1.0.2</Version>
+    <Version>1.1.0</Version>
     
     <!-- NuGet package properties -->
     <PackageId>Sanet.Transport.Channel</PackageId>
@@ -21,7 +21,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Sanet.Transport" Version="1.0.1" />
+    <PackageReference Include="Sanet.Transport" Version="1.0.2" />
   </ItemGroup>
 
   <ItemGroup>
