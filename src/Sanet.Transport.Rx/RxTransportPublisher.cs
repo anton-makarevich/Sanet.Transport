@@ -1,3 +1,4 @@
+using System.Reactive.Concurrency;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 
@@ -9,6 +10,12 @@ namespace Sanet.Transport.Rx;
 public class RxTransportPublisher : ITransportPublisher
 {
     private readonly Subject<TransportMessage> _messageSubject = new();
+    private readonly IScheduler _scheduler;
+
+    public RxTransportPublisher(IScheduler? scheduler = null)
+    {
+        _scheduler = scheduler ?? TaskPoolScheduler.Default;
+    }
 
     /// <summary>
     /// Publishes a transport message to all subscribers
@@ -27,6 +34,9 @@ public class RxTransportPublisher : ITransportPublisher
     /// <param name="onMessageReceived">Action to call when a message is received</param>
     public void Subscribe(Action<TransportMessage> onMessageReceived)
     {
-        _messageSubject.AsObservable().Subscribe(onMessageReceived);
+        _messageSubject
+            .AsObservable()
+            .ObserveOn(_scheduler)
+            .Subscribe(onMessageReceived);
     }
 }
