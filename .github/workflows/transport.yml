@@ -14,12 +14,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v3
+        uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 9.x
+          dotnet-version: 10.x
 
       - name: Run Rx Tests
         run: dotnet test tests/Sanet.Transport.Rx.Tests/Sanet.Transport.Rx.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport.Rx]*
@@ -31,9 +31,11 @@ jobs:
         run: dotnet test tests/Sanet.Transport.SignalR.Tests/Sanet.Transport.SignalR.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport.SignalR.Client]* /p:Include=[Sanet.Transport.SignalR.Server]* /p:Exclude="[Sanet.Transport.SignalR.Client]*Discovery/UdpClientFactory.cs"
 
       - name: Upload test results
+        uses: codecov/codecov-action@v5
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-        run: bash <(curl -s https://codecov.io/bash) -f "tests/Sanet.Transport.Rx.Tests/coverage.opencover.xml" -f "tests/Sanet.Transport.Channel.Tests/coverage.opencover.xml" -f "tests/Sanet.Transport.SignalR.Tests/coverage.opencover.xml" -t "$CODECOV_TOKEN"
+        with:
+          files: tests/Sanet.Transport.Rx.Tests/coverage.opencover.xml,tests/Sanet.Transport.Channel.Tests/coverage.opencover.xml,tests/Sanet.Transport.SignalR.Tests/coverage.opencover.xml
   
   
   publish-nuget:
@@ -42,12 +44,12 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
         
       - name: Set up .NET
-        uses: actions/setup-dotnet@v3
+        uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '9.x'
+          dotnet-version: '10.x'
 
       - name: Create nuget packages
         run: |
