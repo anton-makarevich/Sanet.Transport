@@ -9,6 +9,9 @@ namespace Sanet.Transport.SignalR.Client.Publishers;
 /// <summary>
 /// Relay-specific implementation of <see cref="ITransportPublisher"/> using SignalR.
 /// Connects outbound to a cloud RelayHub using WebSockets and room session token authentication.
+/// Subscriber callbacks and public events are dispatched via the <see cref="SynchronizationContext"/>
+/// active at construction time, if any. Consumers on UI frameworks (Avalonia, WPF, WinUI) should
+/// construct this publisher on the UI thread to receive callbacks without manual marshaling.
 /// </summary>
 public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
 {
@@ -161,7 +164,7 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
 
         if (_hubConnection.State == HubConnectionState.Reconnecting)
         {
-            _logger?.LogWarning("Message dropped: client is reconnecting");
+            _logger?.LogError("Message dropped: client is reconnecting — no message queuing in v1");
             return;
         }
 
@@ -241,11 +244,11 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
         if (error.Code == HubErrorCode.HostDisconnected)
         {
             _logger?.LogWarning("Host disconnected: {Message}", error.Message);
-            HostDisconnected?.Invoke();
+            RaiseEvent(HostDisconnected);
             return;
         }
 
-        HubErrorReceived?.Invoke(error);
+        RaiseEvent(() => HubErrorReceived?.Invoke(error));
     }
 
     private void HandlePeerConnected(string peerId)
@@ -255,7 +258,7 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
             return;
         }
 
-        PeerConnected?.Invoke(peerId);
+        RaiseEvent(() => PeerConnected?.Invoke(peerId));
     }
 
     private void HandlePeerDisconnected(string peerId)
@@ -265,7 +268,16 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
             return;
         }
 
-        PeerDisconnected?.Invoke(peerId);
+        RaiseEvent(() => PeerDisconnected?.Invoke(peerId));
+    }
+
+    private void RaiseEvent(Action? handler)
+    {
+        if (handler is null) return;
+        if (_syncContext is not null)
+            _syncContext.Post(_ => handler(), null);
+        else
+            handler();
     }
 
     private void NotifySubscribers(TransportMessage message)
@@ -288,7 +300,10 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
                     }
                     catch (Exception ex)
                     {
-                        _logger?.LogWarning(ex, "Error notifying subscriber via sync context");
+                        if (_logger is not null)
+                            _logger.LogWarning(ex, "Error notifying subscriber via sync context");
+                        else
+                            Console.Error.WriteLine($"Error notifying subscriber: {ex}");
                     }
                 }
             }, null);
@@ -303,7 +318,10 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogWarning(ex, "Error notifying subscriber");
+                    if (_logger is not null)
+                        _logger.LogWarning(ex, "Error notifying subscriber");
+                    else
+                        Console.Error.WriteLine($"Error notifying subscriber: {ex}");
                 }
             }
         }
@@ -321,6 +339,10 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
 
         _isDisposed = true;
 
+        _hubConnection.Reconnecting -= OnReconnecting;
+        _hubConnection.Reconnected -= OnReconnected;
+        _hubConnection.Closed -= OnClosed;
+
         if (_hubConnection.State != HubConnectionState.Disconnected)
         {
             await _hubConnection.StopAsync();
@@ -334,7 +356,7 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
     private Task OnReconnecting(Exception? exception)
     {
         _logger?.LogInformation(exception, "Relay client reconnecting");
-        Reconnecting?.Invoke(exception);
+        RaiseEvent(() => Reconnecting?.Invoke(exception));
         return Task.CompletedTask;
     }
 
@@ -343,7 +365,7 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
         _logger?.LogInformation("Relay client reconnected with connection ID {ConnectionId}", connectionId);
 
         // PRD §6: No state resynchronization or replay of missed messages in v1.
-        Reconnected?.Invoke(connectionId);
+        RaiseEvent(() => Reconnected?.Invoke(connectionId));
         return Task.CompletedTask;
     }
 
@@ -358,7 +380,10 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
             _logger?.LogInformation("Relay client connection closed");
         }
 
-        Closed?.Invoke(exception);
+        // Return Task.CompletedTask to signal that reconnect policy is owned
+        // by the caller via HubConnectionBuilder.WithAutomaticReconnect().
+        // Without that configuration, Closed is terminal.
+        RaiseEvent(() => Closed?.Invoke(exception));
         return Task.CompletedTask;
     }
 }
