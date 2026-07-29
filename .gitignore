@@ -271,3 +271,8 @@ __pycache__/
 # Scripts
 
 serve-wasm.ps1
+
+# AI
+.agents/
+.claude/skills/
+skills-lock.json
