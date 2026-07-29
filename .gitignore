@@ -275,4 +275,5 @@ serve-wasm.ps1
 # AI
 .agents/
 .claude/skills/
+.serena/memories/
 skills-lock.json
