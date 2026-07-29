@@ -1,110 +1,103 @@
 # Sanet.Transport.SignalR.Client
 
-Provides the client-side components (Client Publisher, Network Discovery) for the Sanet.Transport SignalR implementation. This package allows clients to connect to a SignalR host without needing ASP.NET Core dependencies.
+Provides client-side transport publishers (`SignalRClientPublisher`, `RelayClientPublisher`) and network discovery services for the `Sanet.Transport` SignalR implementation. This package allows clients to connect to a SignalR host or a Cloud Relay Hub without requiring ASP.NET Core dependencies.
 
 [![NuGet](https://img.shields.io/nuget/v/Sanet.Transport.SignalR.Client?logo=nuget)](https://www.nuget.org/packages/Sanet.Transport.SignalR.Client/)
 
 ## Overview
 
-This library contains the client infrastructure required to connect to a `Sanet.Transport.SignalR.Server` host. It uses `Microsoft.NET.Sdk` and includes:
+This library contains client transport implementations for `ITransportPublisher`:
 
-- `SignalRClientPublisher`: Implements `ITransportPublisher` for the client-side, connecting to a specific SignalR hub.
-- Network Discovery Services (`BroadcastDiscoveryService`, `MulticastDiscoveryService`, `IDiscoveryService`): Allows clients to find SignalR hosts on the local network.
-- Network Utilities (`IUdpClientWrapper`, etc.): Low-level UDP helpers for discovery.
-
-## Features
-
-- Connect to a SignalR Hub hosted by `Sanet.Transport.SignalR.Server`.
-- Send `TransportMessage` objects to the server.
-- Receive messages broadcast by the server.
-- Discover compatible SignalR hosts on the local network (Broadcast/Multicast).
-- Does *not* require ASP.NET Core dependencies.
+- **`SignalRClientPublisher`**: Connects directly to a LAN `Sanet.Transport.SignalR.Server` embedded host (`SignalRHostManager`).
+- **`RelayClientPublisher`**: Connects outbound to a Cloud `RelayHub` using WebSockets, room codes, and session tokens.
+- **Network Discovery Services** (`BroadcastDiscoveryService`, `MulticastDiscoveryService`, `IDiscoveryService`): Allows clients to find SignalR hosts on the local network.
 
 ## Installation
 
-```
+```bash
 dotnet add package Sanet.Transport.SignalR.Client
 ```
 
 Or via the Package Manager Console:
-```
+```powershell
 Install-Package Sanet.Transport.SignalR.Client
 ```
 
-## Usage
+## Usage Examples
 
-### Client-side (With Discovery)
+### 1. LAN Client (`SignalRClientPublisher` with UDP Discovery)
 
 ```csharp
+using Sanet.Transport;
 using Sanet.Transport.SignalR.Client.Discovery;
 using Sanet.Transport.SignalR.Client.Publishers;
-using Sanet.Transport;
 
-// Create a discovery service (use Broadcast or Multicast)
+// 1. Discover hosts on LAN
 using var discoveryService = new BroadcastDiscoveryService();
-
-// Discover hosts on the network
 var discoveredUrls = await discoveryService.DiscoverHosts(timeoutSeconds: 5);
 
-ITransportPublisher? clientPublisher = null;
-
-// Connect to the first discovered host
 if (discoveredUrls.Count > 0)
 {
-    Console.WriteLine($"Found host at {discoveredUrls[0]}");
-    // Create a client publisher connected to the host
-    clientPublisher = new SignalRClientPublisher(discoveredUrls[0]);
-    await ((SignalRClientPublisher)clientPublisher).StartAsync(); // Start the connection
-    
-    // Subscribe to messages from the server
-    clientPublisher.Subscribe(message => {
-        Console.WriteLine($"Client received: {message.CommandType} from {message.SourceId}");
+    // 2. Connect to the host
+    await using var publisher = new SignalRClientPublisher(discoveredUrls[0]);
+    publisher.Subscribe(message => 
+    {
+        Console.WriteLine($"Received: {message.MessageType} from {message.SourceId}");
     });
-    
-    // Send a message to the server
-    Console.WriteLine("Sending message to server...");
-    clientPublisher.PublishMessage(new TransportMessage {
-        CommandType = "ClientHello",
-        SourceId = Guid.NewGuid(), // Client's ID
-        Payload = "{\"client\": \"greetings\"}",
+
+    await publisher.StartAsync();
+
+    // 3. Publish message
+    await publisher.PublishMessage(new TransportMessage 
+    {
+        MessageType = "ClientHello",
+        SourceId = Guid.NewGuid(),
+        Payload = "{\"data\":\"hello\"}",
         Timestamp = DateTime.UtcNow
     });
-} else {
-    Console.WriteLine("No hosts found.");
 }
-
-Console.WriteLine("Client running. Press Enter to stop...");
-Console.ReadLine();
-
-// Dispose the publisher when done
-if (clientPublisher is IAsyncDisposable asyncDisposable)
-{
-    await asyncDisposable.DisposeAsync();
-}
-else if (clientPublisher is IDisposable disposable)
-{
-    disposable.Dispose();
-}
-
 ```
 
-### Client-side (Manual Connection - Without Discovery)
+### 2. Cloud Relay Client (`RelayClientPublisher`)
+
+Used for cross-network/internet play without port forwarding. Connects outbound over WebSockets to a `RelayHub` using a room code and a session token issued by the room management REST API.
 
 ```csharp
-using Sanet.Transport.SignalR.Client.Publishers;
 using Sanet.Transport;
+using Sanet.Transport.SignalR.Client.Publishers;
+using Sanet.Transport.SignalR.Client.Relay;
 
-// Connect to a known host URL
-var hubUrl = "http://<server-ip-or-hostname>:5000/transporthub"; // Replace with actual URL
-ITransportPublisher clientPublisher = new SignalRClientPublisher(hubUrl);
-await ((SignalRClientPublisher)clientPublisher).StartAsync(); // Start the connection
+// Session token received from room join/create REST API
+string hubUrl = "wss://relay.example.com/relayhub";
+string roomCode = "ABC234";
+string sessionToken = "session-token-from-rest-api";
 
-// Subscribe and publish messages as shown in the discovery example...
+await using var publisher = new RelayClientPublisher(hubUrl, roomCode, sessionToken);
 
-// Remember to dispose the publisher when done
-// ... (Dispose code as above) ...
+// Optional: Listen for hub events
+publisher.PeerConnected += peerId => Console.WriteLine($"Peer connected: {peerId}");
+publisher.PeerDisconnected += peerId => Console.WriteLine($"Peer disconnected: {peerId}");
+publisher.HubErrorReceived += error => Console.WriteLine($"Hub error: {error.Code} - {error.Message}");
+
+// Subscribe to transport messages
+publisher.Subscribe(message => 
+{
+    Console.WriteLine($"Received: {message.MessageType} from {message.SourceId}");
+});
+
+// Start WebSocket connection
+await publisher.StartAsync();
+
+// Publish message to the room
+await publisher.PublishMessage(new TransportMessage 
+{
+    MessageType = "GameCommand",
+    SourceId = myPlayerId,
+    Payload = "{\"action\":\"move\"}",
+    Timestamp = DateTime.UtcNow
+});
 ```
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License - see the [LICENSE](../../LICENSE) file for details.

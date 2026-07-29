@@ -23,7 +23,9 @@ Sanet.Transport provides a simple, extensible architecture for publishing and su
 - **Multiple Transport Implementations**:
   - **Rx**: Using Reactive Extensions for reactive programming patterns
   - **Channel**: Using System.Threading.Channels for high-performance message passing
-  - **SignalR**: Using ASP.NET Core SignalR for real-time communication between applications over a network
+  - **SignalR**: Real-time networking via ASP.NET Core SignalR:
+    - **SignalRClientPublisher**: Direct LAN peer-to-host communication
+    - **RelayClientPublisher**: Outbound cloud relay communication (NAT-traversal & cross-network play)
 - **Simple API**: Easy to use publisher/subscriber pattern
 - **Extensible**: Create custom transport implementations for specific needs
 
@@ -34,36 +36,74 @@ Sanet.Transport provides a simple, extensible architecture for publishing and su
 #### Using NuGet Packages (Recommended)
 
 Install the core package:
-```
+```bash
 dotnet add package Sanet.Transport
 ```
 
 For specific implementations, install the corresponding package:
-```
+```bash
 dotnet add package Sanet.Transport.Rx
 dotnet add package Sanet.Transport.Channel
-dotnet add package Sanet.Transport.SignalR
+dotnet add package Sanet.Transport.SignalR.Client
+dotnet add package Sanet.Transport.SignalR.Server
 ```
 
-## Library Documentation
+## SignalR Client Publishers
 
-For detailed documentation on each implementation, please refer to the README files in the respective library directories:
+`Sanet.Transport.SignalR.Client` includes two implementations of `ITransportPublisher`:
 
-- [Sanet.Transport](src/Sanet.Transport/README.md) - Core abstractions
-- [Sanet.Transport.Rx](src/Sanet.Transport.Rx/README.md) - Reactive Extensions implementation
-- [Sanet.Transport.Channel](src/Sanet.Transport.Channel/README.md) - System.Threading.Channels implementation
-- [Sanet.Transport.SignalR](src/Sanet.Transport.SignalR/README.md) - ASP.NET Core SignalR implementation
+### 1. `SignalRClientPublisher` (LAN Peer-to-Host)
+Used for local network play where one peer acts as the embedded server host (`SignalRHostManager`).
+
+```csharp
+using Sanet.Transport;
+using Sanet.Transport.SignalR.Client.Publishers;
+
+var publisher = new SignalRClientPublisher("http://192.168.1.100:5000/transporthub");
+publisher.Subscribe(message => Console.WriteLine($"Received: {message.MessageType}"));
+
+await publisher.StartAsync();
+
+await publisher.PublishMessage(new TransportMessage 
+{ 
+    MessageType = "GameCommand", 
+    SourceId = myId, 
+    Payload = "{}" 
+});
+```
+
+### 2. `RelayClientPublisher` (Cloud Relay Hub)
+Used for internet play across different networks/NATs. Connects outbound over WebSockets to a cloud `RelayHub` using room codes and session tokens issued by a room management REST API.
+
+```csharp
+using Sanet.Transport;
+using Sanet.Transport.SignalR.Client.Publishers;
+
+var publisher = new RelayClientPublisher(
+    hubUrl: "wss://relay.example.com/relayhub",
+    roomCode: "ABC234",
+    sessionToken: sessionTokenFromRestApi);
+
+publisher.Subscribe(message => Console.WriteLine($"Received: {message.MessageType}"));
+
+await publisher.StartAsync();
+
+await publisher.PublishMessage(new TransportMessage 
+{ 
+    MessageType = "GameCommand", 
+    SourceId = myId, 
+    Payload = "{}" 
+});
+```
 
 ## Project Structure
 
-- **Sanet.Transport**: Core interfaces and message definitions
+- **Sanet.Transport**: Core interfaces (`ITransportPublisher`) and message definitions (`TransportMessage`)
 - **Sanet.Transport.Rx**: Implementation using Reactive Extensions
 - **Sanet.Transport.Channel**: Implementation using System.Threading.Channels
-- **Sanet.Transport.SignalR**: Implementation using ASP.NET Core SignalR for network communication
-- **Sanet.Transport.Rx.Tests**: Unit tests for Rx implementation
-- **Sanet.Transport.Channel.Tests**: Unit tests for Channel implementation
-- **Sanet.Transport.SignalR.Tests**: Unit tests for SignalR implementation
+- **Sanet.Transport.SignalR.Client**: Client-side SignalR publishers (`SignalRClientPublisher`, `RelayClientPublisher`) and UDP discovery
+- **Sanet.Transport.SignalR.Server**: Server-side embedded host (`SignalRHostManager`) and server publisher
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
