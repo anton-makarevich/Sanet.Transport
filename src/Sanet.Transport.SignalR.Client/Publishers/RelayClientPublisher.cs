@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.Logging;
 using Sanet.Transport.SignalR.Client.Relay;
 
 namespace Sanet.Transport.SignalR.Client.Publishers;
@@ -13,6 +14,9 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
 {
     private readonly HubConnection _hubConnection;
     private readonly string _roomCode;
+    private readonly string? _expectedHostId;
+    private readonly ILogger<RelayClientPublisher>? _logger;
+    private readonly SynchronizationContext? _syncContext;
     private readonly List<Action<TransportMessage>> _subscribers = [];
     private long _sequenceNumber;
     private bool _isDisposed;
@@ -33,6 +37,26 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
     public event Action<HubError>? HubErrorReceived;
 
     /// <summary>
+    /// Event raised when the host disconnects from the room.
+    /// </summary>
+    public event Action? HostDisconnected;
+
+    /// <summary>
+    /// Event raised when the connection is attempting to reconnect.
+    /// </summary>
+    public event Action<Exception?>? Reconnecting;
+
+    /// <summary>
+    /// Event raised when the connection has been reestablished.
+    /// </summary>
+    public event Action<string?>? Reconnected;
+
+    /// <summary>
+    /// Event raised when the connection has been closed.
+    /// </summary>
+    public event Action<Exception?>? Closed;
+
+    /// <summary>
     /// Gets the current state of the underlying SignalR connection.
     /// </summary>
     public HubConnectionState State => _hubConnection.State;
@@ -48,8 +72,19 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
     /// <param name="hubUrl">The base URL of the SignalR relay hub.</param>
     /// <param name="roomCode">The 6-character room code.</param>
     /// <param name="sessionToken">The session token issued by the REST room join/create API.</param>
-    public RelayClientPublisher(string hubUrl, string roomCode, string sessionToken)
+    /// <param name="logger">Logger</param>
+    /// <param name="expectedHostId">Expected host ID</param>
+    public RelayClientPublisher(
+        string hubUrl,
+        string roomCode,
+        string sessionToken,
+        ILogger<RelayClientPublisher>? logger = null,
+        string? expectedHostId = null)
     {
+        _logger = logger;
+        _expectedHostId = expectedHostId;
+        _syncContext = SynchronizationContext.Current;
+
         if (string.IsNullOrWhiteSpace(hubUrl))
         {
             throw new ArgumentException("Hub URL cannot be null or empty", nameof(hubUrl));
@@ -91,6 +126,10 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
         _hubConnection.On<HubError>("OnError", HandleHubError);
         _hubConnection.On<string>("OnPeerConnected", HandlePeerConnected);
         _hubConnection.On<string>("OnPeerDisconnected", HandlePeerDisconnected);
+
+        _hubConnection.Reconnecting += OnReconnecting;
+        _hubConnection.Reconnected += OnReconnected;
+        _hubConnection.Closed += OnClosed;
     }
 
     /// <summary>
@@ -118,6 +157,12 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
         if (_isDisposed)
         {
             throw new ObjectDisposedException(nameof(RelayClientPublisher));
+        }
+
+        if (_hubConnection.State == HubConnectionState.Reconnecting)
+        {
+            _logger?.LogWarning("Message dropped: client is reconnecting");
+            return;
         }
 
         if (_hubConnection.State != HubConnectionState.Connected)
@@ -162,6 +207,14 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
             return;
         }
 
+        if (_expectedHostId is not null && envelope.SenderId != _expectedHostId)
+        {
+            _logger?.LogWarning(
+                "Dropping envelope from unexpected sender {SenderId}; expected {ExpectedHostId}",
+                envelope.SenderId, _expectedHostId);
+            return;
+        }
+
         try
         {
             var message = JsonSerializer.Deserialize<TransportMessage>(envelope.Payload);
@@ -172,9 +225,9 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
 
             NotifySubscribers(message);
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
-            // Ignore malformed payloads
+            _logger?.LogError(ex, "Malformed payload received in envelope from {SenderId}", envelope.SenderId);
         }
     }
 
@@ -182,6 +235,13 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
     {
         if (_isDisposed)
         {
+            return;
+        }
+
+        if (error.Code == HubErrorCode.HostDisconnected)
+        {
+            _logger?.LogWarning("Host disconnected: {Message}", error.Message);
+            HostDisconnected?.Invoke();
             return;
         }
 
@@ -216,15 +276,35 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
             currentSubscribers = _subscribers.ToArray();
         }
 
-        foreach (var subscriber in currentSubscribers)
+        if (_syncContext is not null)
         {
-            try
+            _syncContext.Post(_ =>
             {
-                subscriber(message);
-            }
-            catch (Exception ex)
+                foreach (var subscriber in currentSubscribers)
+                {
+                    try
+                    {
+                        subscriber(message);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogWarning(ex, "Error notifying subscriber via sync context");
+                    }
+                }
+            }, null);
+        }
+        else
+        {
+            foreach (var subscriber in currentSubscribers)
             {
-                Console.WriteLine($"Error notifying subscriber: {ex}");
+                try
+                {
+                    subscriber(message);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Error notifying subscriber");
+                }
             }
         }
     }
@@ -249,5 +329,36 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
         await _hubConnection.DisposeAsync();
 
         GC.SuppressFinalize(this);
+    }
+
+    private Task OnReconnecting(Exception? exception)
+    {
+        _logger?.LogInformation(exception, "Relay client reconnecting");
+        Reconnecting?.Invoke(exception);
+        return Task.CompletedTask;
+    }
+
+    private Task OnReconnected(string? connectionId)
+    {
+        _logger?.LogInformation("Relay client reconnected with connection ID {ConnectionId}", connectionId);
+
+        // PRD §6: No state resynchronization or replay of missed messages in v1.
+        Reconnected?.Invoke(connectionId);
+        return Task.CompletedTask;
+    }
+
+    private Task OnClosed(Exception? exception)
+    {
+        if (exception is not null)
+        {
+            _logger?.LogError(exception, "Relay client connection closed with error");
+        }
+        else
+        {
+            _logger?.LogInformation("Relay client connection closed");
+        }
+
+        Closed?.Invoke(exception);
+        return Task.CompletedTask;
     }
 }

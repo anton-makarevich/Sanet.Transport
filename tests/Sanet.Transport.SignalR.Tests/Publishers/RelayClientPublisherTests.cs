@@ -1,5 +1,10 @@
+using System.Reflection;
+using System.Text.Json;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.Logging;
+using NSubstitute;
 using Sanet.Transport.SignalR.Client.Publishers;
+using Sanet.Transport.SignalR.Client.Relay;
 using Shouldly;
 using Xunit;
 
@@ -110,5 +115,301 @@ public class RelayClientPublisherTests
             SourceId = Guid.NewGuid()
         }));
         Should.Throw<ObjectDisposedException>(() => publisher.Subscribe(_ => { }));
+    }
+
+    [Fact]
+    public void Constructor_WithLoggerAndExpectedHostId_DoesNotThrow()
+    {
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger, "host-1");
+        publisher.ShouldNotBeNull();
+        publisher.State.ShouldBe(HubConnectionState.Disconnected);
+    }
+
+    [Fact]
+    public void Constructor_WithLoggerOnly_DoesNotThrow()
+    {
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger);
+        publisher.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void Constructor_WithExpectedHostIdOnly_DoesNotThrow()
+    {
+        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, null, "host-1");
+        publisher.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void HandleHubError_HostDisconnected_FiresHostDisconnectedEvent()
+    {
+        var publisher = CreatePublisher();
+        var hostDisconnectedFired = false;
+        publisher.HostDisconnected += () => hostDisconnectedFired = true;
+
+        var method = typeof(RelayClientPublisher).GetMethod("HandleHubError",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        method.ShouldNotBeNull();
+
+        var error = new HubError(HubErrorCode.HostDisconnected, "Host lost", ValidRoomCode);
+        method.Invoke(publisher, [error]);
+
+        hostDisconnectedFired.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void HandleHubError_OtherError_FiresHubErrorReceived()
+    {
+        var publisher = CreatePublisher();
+        HubError? received = null;
+        publisher.HubErrorReceived += e => received = e;
+
+        var method = typeof(RelayClientPublisher).GetMethod("HandleHubError",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        method.ShouldNotBeNull();
+
+        var error = new HubError(HubErrorCode.RoomNotFound, "Room not found", ValidRoomCode);
+        method.Invoke(publisher, [error]);
+
+        received.ShouldNotBeNull();
+        received.Code.ShouldBe(HubErrorCode.RoomNotFound);
+    }
+
+    private static RelayClientPublisher CreatePublisher(ILogger<RelayClientPublisher>? logger = null, string? expectedHostId = null)
+    {
+        var original = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(null);
+        try
+        {
+            return new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger, expectedHostId);
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(original);
+        }
+    }
+
+    [Fact]
+    public void HandleEnvelopeReceived_WithLoggedAndExpectedHostId_DropsSpoofedSender()
+    {
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        var publisher = CreatePublisher(logger, "expected-host");
+        var wasCalled = false;
+        publisher.Subscribe(_ => wasCalled = true);
+
+        var method = typeof(RelayClientPublisher).GetMethod("HandleEnvelopeReceived",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        method.ShouldNotBeNull();
+
+        var message = new TransportMessage
+        {
+            MessageType = "Test",
+            SourceId = Guid.NewGuid(),
+            Payload = "test"
+        };
+        var serialized = JsonSerializer.Serialize(message);
+        var spoofedEnvelope = new RelayEnvelope(
+            SenderId: "spoofed-sender",
+            Payload: serialized,
+            SchemaVersion: "1.0.0",
+            SequenceNumber: 1,
+            Timestamp: DateTime.UtcNow);
+
+        method.Invoke(publisher, [spoofedEnvelope]);
+
+        wasCalled.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TransportMessage_JsonRoundtrips()
+    {
+        var original = new TransportMessage
+        {
+            MessageType = "Test",
+            SourceId = Guid.NewGuid(),
+            Payload = "test"
+        };
+        var json = JsonSerializer.Serialize(original);
+        json.ShouldNotBeNullOrEmpty();
+        var deserialized = JsonSerializer.Deserialize<TransportMessage>(json);
+        deserialized.ShouldNotBeNull();
+        deserialized.MessageType.ShouldBe(original.MessageType);
+    }
+
+    [Fact]
+    public void HandleEnvelopeReceived_WithExpectedHostId_AcceptsMatchingSender()
+    {
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        var publisher = CreatePublisher(logger, "expected-host");
+        var wasCalled = false;
+        publisher.Subscribe(_ => wasCalled = true);
+
+        var method = typeof(RelayClientPublisher).GetMethod("HandleEnvelopeReceived",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        method.ShouldNotBeNull();
+
+        var message = new TransportMessage
+        {
+            MessageType = "Test",
+            SourceId = Guid.NewGuid(),
+            Payload = "test"
+        };
+        var serialized = JsonSerializer.Serialize(message);
+        var validEnvelope = new RelayEnvelope(
+            SenderId: "expected-host",
+            Payload: serialized,
+            SchemaVersion: "1.0.0",
+            SequenceNumber: 1,
+            Timestamp: DateTime.UtcNow);
+
+        method.Invoke(publisher, [validEnvelope]);
+
+        wasCalled.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void HandleEnvelopeReceived_MalformedPayload_DoesNotThrow()
+    {
+        var publisher = CreatePublisher();
+
+        var method = typeof(RelayClientPublisher).GetMethod("HandleEnvelopeReceived",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        method.ShouldNotBeNull();
+
+        var malformedEnvelope = new RelayEnvelope(
+            SenderId: "sender-1",
+            Payload: "not-json-at-all",
+            SchemaVersion: "1.0.0",
+            SequenceNumber: 1,
+            Timestamp: DateTime.UtcNow);
+
+        Should.NotThrow(() => method.Invoke(publisher, [malformedEnvelope]));
+    }
+
+    [Fact]
+    public void HandleEnvelopeReceived_NullPayload_DoesNotThrow()
+    {
+        var publisher = CreatePublisher();
+
+        var method = typeof(RelayClientPublisher).GetMethod("HandleEnvelopeReceived",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        method.ShouldNotBeNull();
+
+        var envelope = new RelayEnvelope(
+            SenderId: "sender-1",
+            Payload: null!,
+            SchemaVersion: "1.0.0",
+            SequenceNumber: 1,
+            Timestamp: DateTime.UtcNow);
+
+        Should.NotThrow(() => method.Invoke(publisher, [envelope]));
+    }
+
+    [Fact]
+    public void NotifySubscribers_UsesCapturedSynchronizationContext()
+    {
+        var postCalls = 0;
+        var testSyncContext = new TestSynchronizationContext(() => postCalls++);
+
+        var originalContext = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(testSyncContext);
+
+        try
+        {
+            var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken);
+            var notified = false;
+            publisher.Subscribe(_ => notified = true);
+
+            var method = typeof(RelayClientPublisher).GetMethod("HandleEnvelopeReceived",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            method.ShouldNotBeNull();
+
+            var message = new TransportMessage
+            {
+                MessageType = "Test",
+                SourceId = Guid.NewGuid(),
+                Payload = "test"
+            };
+            var serialized = JsonSerializer.Serialize(message);
+            var envelope = new RelayEnvelope(
+                SenderId: "sender-1",
+                Payload: serialized,
+                SchemaVersion: "1.0.0",
+                SequenceNumber: 1,
+                Timestamp: DateTime.UtcNow);
+
+            method.Invoke(publisher, [envelope]);
+
+            postCalls.ShouldBeGreaterThan(0);
+            notified.ShouldBeTrue();
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(originalContext);
+        }
+    }
+
+    [Fact]
+    public void HandleHubError_NonHostError_DoesNotFireHostDisconnected()
+    {
+        var publisher = CreatePublisher();
+        var hostDisconnectedFired = false;
+        publisher.HostDisconnected += () => hostDisconnectedFired = true;
+
+        var method = typeof(RelayClientPublisher).GetMethod("HandleHubError",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        method.ShouldNotBeNull();
+
+        var error = new HubError(HubErrorCode.RoomFull, "Room is full", ValidRoomCode);
+        method.Invoke(publisher, [error]);
+
+        hostDisconnectedFired.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void HandleEnvelopeReceived_NoExpectedHostId_DoesNotDropAnySender()
+    {
+        var publisher = CreatePublisher();
+        var wasCalled = false;
+        publisher.Subscribe(_ => wasCalled = true);
+
+        var method = typeof(RelayClientPublisher).GetMethod("HandleEnvelopeReceived",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        method.ShouldNotBeNull();
+
+        var message = new TransportMessage
+        {
+            MessageType = "Test",
+            SourceId = Guid.NewGuid(),
+            Payload = "test"
+        };
+        var serialized = JsonSerializer.Serialize(message);
+        var envelope = new RelayEnvelope(
+            SenderId: "any-sender",
+            Payload: serialized,
+            SchemaVersion: "1.0.0",
+            SequenceNumber: 1,
+            Timestamp: DateTime.UtcNow);
+
+        method.Invoke(publisher, [envelope]);
+
+        wasCalled.ShouldBeTrue();
+    }
+
+    private sealed class TestSynchronizationContext : SynchronizationContext
+    {
+        private readonly Action _onPost;
+
+        public TestSynchronizationContext(Action onPost)
+        {
+            _onPost = onPost;
+        }
+
+        public override void Post(SendOrPostCallback d, object? state)
+        {
+            _onPost();
+            d(state);
+        }
     }
 }
