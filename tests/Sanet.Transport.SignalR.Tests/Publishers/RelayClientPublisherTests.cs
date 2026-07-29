@@ -19,8 +19,9 @@ public class RelayClientPublisherTests
     [Fact]
     public void Constructor_WithValidArgs_CreatesPublisher()
     {
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
         // Act
-        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken);
+        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger);
 
         // Assert
         publisher.ShouldNotBeNull();
@@ -34,8 +35,9 @@ public class RelayClientPublisherTests
     [InlineData("   ", ValidRoomCode, ValidSessionToken)]
     public void Constructor_WithInvalidHubUrl_ThrowsArgumentException(string? hubUrl, string roomCode, string sessionToken)
     {
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
         // Act & Assert
-        Should.Throw<ArgumentException>(() => new RelayClientPublisher(hubUrl!, roomCode, sessionToken));
+        Should.Throw<ArgumentException>(() => new RelayClientPublisher(hubUrl!, roomCode, sessionToken, logger));
     }
 
     [Theory]
@@ -44,8 +46,9 @@ public class RelayClientPublisherTests
     [InlineData(ValidHubUrl, "   ", ValidSessionToken)]
     public void Constructor_WithInvalidRoomCode_ThrowsArgumentException(string hubUrl, string? roomCode, string sessionToken)
     {
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
         // Act & Assert
-        Should.Throw<ArgumentException>(() => new RelayClientPublisher(hubUrl, roomCode!, sessionToken));
+        Should.Throw<ArgumentException>(() => new RelayClientPublisher(hubUrl, roomCode!, sessionToken, logger));
     }
 
     [Theory]
@@ -54,15 +57,17 @@ public class RelayClientPublisherTests
     [InlineData(ValidHubUrl, ValidRoomCode, "   ")]
     public void Constructor_WithInvalidSessionToken_ThrowsArgumentException(string hubUrl, string roomCode, string? sessionToken)
     {
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
         // Act & Assert
-        Should.Throw<ArgumentException>(() => new RelayClientPublisher(hubUrl, roomCode, sessionToken!));
+        Should.Throw<ArgumentException>(() => new RelayClientPublisher(hubUrl, roomCode, sessionToken!, logger));
     }
 
     [Fact]
     public void Subscribe_WithNullAction_ThrowsArgumentNullException()
     {
         // Arrange
-        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken);
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger);
 
         // Act & Assert
         Should.Throw<ArgumentNullException>(() => publisher.Subscribe(null!));
@@ -72,7 +77,8 @@ public class RelayClientPublisherTests
     public void Subscribe_ValidAction_RegistersSubscriberWithoutThrowing()
     {
         // Arrange
-        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken);
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger);
         var called = false;
 
         // Act
@@ -86,7 +92,8 @@ public class RelayClientPublisherTests
     public async Task PublishMessage_WhenDisconnected_ThrowsInvalidOperationException()
     {
         // Arrange
-        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken);
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger);
         var message = new TransportMessage
         {
             MessageType = "TestCommand",
@@ -102,7 +109,8 @@ public class RelayClientPublisherTests
     public async Task DisposeAsync_MarksPublisherDisposed()
     {
         // Arrange
-        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken);
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger);
 
         // Act
         await publisher.DisposeAsync();
@@ -137,7 +145,8 @@ public class RelayClientPublisherTests
     [Fact]
     public void Constructor_WithExpectedHostIdOnly_DoesNotThrow()
     {
-        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, null, "host-1");
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger, "host-1");
         publisher.ShouldNotBeNull();
     }
 
@@ -178,6 +187,7 @@ public class RelayClientPublisherTests
 
     private static RelayClientPublisher CreatePublisher(ILogger<RelayClientPublisher>? logger = null, string? expectedHostId = null)
     {
+        logger ??= Substitute.For<ILogger<RelayClientPublisher>>();
         var original = SynchronizationContext.Current;
         SynchronizationContext.SetSynchronizationContext(null);
         try
@@ -317,7 +327,8 @@ public class RelayClientPublisherTests
 
         try
         {
-            var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken);
+            var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+            var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger);
             var notified = false;
             publisher.Subscribe(_ => notified = true);
 

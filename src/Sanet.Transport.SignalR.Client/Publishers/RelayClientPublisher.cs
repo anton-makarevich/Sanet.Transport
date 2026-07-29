@@ -18,7 +18,7 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
     private readonly HubConnection _hubConnection;
     private readonly string _roomCode;
     private readonly string? _expectedHostId;
-    private readonly ILogger<RelayClientPublisher>? _logger;
+    private readonly ILogger<RelayClientPublisher> _logger;
     private readonly SynchronizationContext? _syncContext;
     private readonly List<Action<TransportMessage>> _subscribers = [];
     private long _sequenceNumber;
@@ -81,7 +81,7 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
         string hubUrl,
         string roomCode,
         string sessionToken,
-        ILogger<RelayClientPublisher>? logger = null,
+        ILogger<RelayClientPublisher> logger,
         string? expectedHostId = null)
     {
         _logger = logger;
@@ -164,7 +164,7 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
 
         if (_hubConnection.State == HubConnectionState.Reconnecting)
         {
-            _logger?.LogError("Message dropped: client is reconnecting — no message queuing in v1");
+            _logger.LogError("Message dropped: client is reconnecting — no message queuing in v1");
             return;
         }
 
@@ -212,7 +212,7 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
 
         if (_expectedHostId is not null && envelope.SenderId != _expectedHostId)
         {
-            _logger?.LogWarning(
+            _logger.LogWarning(
                 "Dropping envelope from unexpected sender {SenderId}; expected {ExpectedHostId}",
                 envelope.SenderId, _expectedHostId);
             return;
@@ -230,7 +230,7 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
         }
         catch (JsonException ex)
         {
-            _logger?.LogError(ex, "Malformed payload received in envelope from {SenderId}", envelope.SenderId);
+            _logger.LogError(ex, "Malformed payload received in envelope from {SenderId}", envelope.SenderId);
         }
     }
 
@@ -243,7 +243,7 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
 
         if (error.Code == HubErrorCode.HostDisconnected)
         {
-            _logger?.LogWarning("Host disconnected: {Message}", error.Message);
+            _logger.LogWarning("Host disconnected: {Message}", error.Message);
             RaiseEvent(HostDisconnected);
             return;
         }
@@ -300,10 +300,7 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
                     }
                     catch (Exception ex)
                     {
-                        if (_logger is not null)
-                            _logger.LogWarning(ex, "Error notifying subscriber via sync context");
-                        else
-                            Console.Error.WriteLine($"Error notifying subscriber: {ex}");
+                        _logger.LogWarning(ex, "Error notifying subscriber via sync context");
                     }
                 }
             }, null);
@@ -318,10 +315,7 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
                 }
                 catch (Exception ex)
                 {
-                    if (_logger is not null)
-                        _logger.LogWarning(ex, "Error notifying subscriber");
-                    else
-                        Console.Error.WriteLine($"Error notifying subscriber: {ex}");
+                    _logger.LogWarning(ex, "Error notifying subscriber");
                 }
             }
         }
@@ -355,16 +349,15 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
 
     private Task OnReconnecting(Exception? exception)
     {
-        _logger?.LogInformation(exception, "Relay client reconnecting");
+        _logger.LogInformation(exception, "Relay client reconnecting");
         RaiseEvent(() => Reconnecting?.Invoke(exception));
         return Task.CompletedTask;
     }
 
     private Task OnReconnected(string? connectionId)
     {
-        _logger?.LogInformation("Relay client reconnected with connection ID {ConnectionId}", connectionId);
+        _logger.LogInformation("Relay client reconnected with connection ID {ConnectionId}", connectionId);
 
-        // PRD §6: No state resynchronization or replay of missed messages in v1.
         RaiseEvent(() => Reconnected?.Invoke(connectionId));
         return Task.CompletedTask;
     }
@@ -373,11 +366,11 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
     {
         if (exception is not null)
         {
-            _logger?.LogError(exception, "Relay client connection closed with error");
+            _logger.LogError(exception, "Relay client connection closed with error");
         }
         else
         {
-            _logger?.LogInformation("Relay client connection closed");
+            _logger.LogInformation("Relay client connection closed");
         }
 
         // Return Task.CompletedTask to signal that reconnect policy is owned
