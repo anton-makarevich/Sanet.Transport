@@ -408,6 +408,61 @@ public class RelayClientPublisherTests
         wasCalled.ShouldBeTrue();
     }
 
+    [Fact]
+    public void BuildConnectionUrl_WithSessionTokenOnly_AppendsSessionToken()
+    {
+        var url = RelayClientPublisher.BuildConnectionUrl(ValidHubUrl, ValidSessionToken, null);
+
+        url.ShouldBe($"http://localhost:5000/relayhub?sessionToken={Uri.EscapeDataString(ValidSessionToken)}");
+    }
+
+    [Fact]
+    public void BuildConnectionUrl_WithApiKey_AppendsApiKeyAfterSessionToken()
+    {
+        var url = RelayClientPublisher.BuildConnectionUrl(ValidHubUrl, ValidSessionToken, "dev-key");
+
+        url.ShouldBe(
+            $"http://localhost:5000/relayhub?sessionToken={Uri.EscapeDataString(ValidSessionToken)}&apiKey=dev-key");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void BuildConnectionUrl_WithoutApiKey_DoesNotAppendApiKey(string? apiKey)
+    {
+        var url = RelayClientPublisher.BuildConnectionUrl(ValidHubUrl, ValidSessionToken, apiKey);
+
+        url.ShouldBe($"http://localhost:5000/relayhub?sessionToken={Uri.EscapeDataString(ValidSessionToken)}");
+    }
+
+    [Fact]
+    public void BuildConnectionUrl_WithExistingQuery_AppendsParameters()
+    {
+        var url = RelayClientPublisher.BuildConnectionUrl("http://localhost:5000/relayhub?foo=bar", ValidSessionToken, "dev-key");
+
+        url.ShouldBe(
+            $"http://localhost:5000/relayhub?foo=bar&sessionToken={Uri.EscapeDataString(ValidSessionToken)}&apiKey=dev-key");
+    }
+
+    [Fact]
+    public void BuildConnectionUrl_EscapesSpecialCharactersInTokenAndApiKey()
+    {
+        var url = RelayClientPublisher.BuildConnectionUrl(ValidHubUrl, "tok+en/=", "dev key");
+
+        url.ShouldBe("http://localhost:5000/relayhub?sessionToken=tok%2Ben%2F%3D&apiKey=dev%20key");
+    }
+
+    [Fact]
+    public void Constructor_WithApiKey_DoesNotThrowAndStaysDisconnected()
+    {
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger, "host-1", "dev-key");
+
+        publisher.ShouldNotBeNull();
+        publisher.State.ShouldBe(HubConnectionState.Disconnected);
+    }
+
     private sealed class TestSynchronizationContext : SynchronizationContext
     {
         private readonly Action _onPost;
