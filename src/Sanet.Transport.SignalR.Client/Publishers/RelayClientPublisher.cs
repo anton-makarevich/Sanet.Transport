@@ -77,12 +77,15 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
     /// <param name="sessionToken">The session token issued by the REST room join/create API.</param>
     /// <param name="logger">Logger</param>
     /// <param name="expectedHostId">Expected host ID</param>
+    /// <param name="apiKey">Optional API key appended as a query parameter. Required by hubs
+    /// that enforce relay authentication (RelayAuthenticationMiddleware).</param>
     public RelayClientPublisher(
         string hubUrl,
         string roomCode,
         string sessionToken,
         ILogger<RelayClientPublisher> logger,
-        string? expectedHostId = null)
+        string? expectedHostId = null,
+        string? apiKey = null)
     {
         _logger = logger;
         _expectedHostId = expectedHostId;
@@ -105,19 +108,8 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
 
         _roomCode = roomCode;
 
-        var uriBuilder = new UriBuilder(hubUrl);
-        var queryToAppend = $"sessionToken={Uri.EscapeDataString(sessionToken)}";
-        if (string.IsNullOrEmpty(uriBuilder.Query) || uriBuilder.Query == "?")
-        {
-            uriBuilder.Query = queryToAppend;
-        }
-        else
-        {
-            uriBuilder.Query = uriBuilder.Query.TrimStart('?') + "&" + queryToAppend;
-        }
-
         _hubConnection = new HubConnectionBuilder()
-            .WithUrl(uriBuilder.Uri, options =>
+            .WithUrl(BuildConnectionUrl(hubUrl, sessionToken, apiKey), options =>
             {
                 options.Transports = HttpTransportType.WebSockets;
                 options.SkipNegotiation = true;
@@ -133,6 +125,35 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
         _hubConnection.Reconnecting += OnReconnecting;
         _hubConnection.Reconnected += OnReconnected;
         _hubConnection.Closed += OnClosed;
+    }
+
+    /// <summary>
+    /// Builds the SignalR hub connection URL, appending the session token (required) and,
+    /// when provided, the api key as query-string parameters.
+    /// </summary>
+    /// <param name="hubUrl">The base URL of the SignalR relay hub.</param>
+    /// <param name="sessionToken">The session token issued by the REST room join/create API.</param>
+    /// <param name="apiKey">Optional API key required by hubs with relay authentication enabled.</param>
+    internal static string BuildConnectionUrl(string hubUrl, string sessionToken, string? apiKey)
+    {
+        var uriBuilder = new UriBuilder(hubUrl);
+        var queryToAppend = $"sessionToken={Uri.EscapeDataString(sessionToken)}";
+
+        if (!string.IsNullOrWhiteSpace(apiKey))
+        {
+            queryToAppend += $"&apiKey={Uri.EscapeDataString(apiKey)}";
+        }
+
+        if (string.IsNullOrEmpty(uriBuilder.Query) || uriBuilder.Query == "?")
+        {
+            uriBuilder.Query = queryToAppend;
+        }
+        else
+        {
+            uriBuilder.Query = uriBuilder.Query.TrimStart('?') + "&" + queryToAppend;
+        }
+
+        return uriBuilder.Uri.AbsoluteUri;
     }
 
     /// <summary>
