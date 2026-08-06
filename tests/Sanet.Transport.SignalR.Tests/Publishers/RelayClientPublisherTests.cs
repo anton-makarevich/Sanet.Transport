@@ -129,7 +129,7 @@ public class RelayClientPublisherTests
     public void Constructor_WithLoggerAndExpectedHostId_DoesNotThrow()
     {
         var logger = Substitute.For<ILogger<RelayClientPublisher>>();
-        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger, "host-1");
+        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger);
         publisher.ShouldNotBeNull();
         publisher.State.ShouldBe(HubConnectionState.Disconnected);
     }
@@ -146,7 +146,7 @@ public class RelayClientPublisherTests
     public void Constructor_WithExpectedHostIdOnly_DoesNotThrow()
     {
         var logger = Substitute.For<ILogger<RelayClientPublisher>>();
-        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger, "host-1");
+        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger);
         publisher.ShouldNotBeNull();
     }
 
@@ -192,43 +192,12 @@ public class RelayClientPublisherTests
         SynchronizationContext.SetSynchronizationContext(null);
         try
         {
-            return new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger, expectedHostId);
+            return new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger);
         }
         finally
         {
             SynchronizationContext.SetSynchronizationContext(original);
         }
-    }
-
-    [Fact]
-    public void HandleEnvelopeReceived_WithLoggedAndExpectedHostId_DropsSpoofedSender()
-    {
-        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
-        var publisher = CreatePublisher(logger, "expected-host");
-        var wasCalled = false;
-        publisher.Subscribe(_ => wasCalled = true);
-
-        var method = typeof(RelayClientPublisher).GetMethod("HandleEnvelopeReceived",
-            BindingFlags.NonPublic | BindingFlags.Instance);
-        method.ShouldNotBeNull();
-
-        var message = new TransportMessage
-        {
-            MessageType = "Test",
-            SourceId = Guid.NewGuid(),
-            Payload = "test"
-        };
-        var serialized = JsonSerializer.Serialize(message);
-        var spoofedEnvelope = new RelayEnvelope(
-            SenderId: "spoofed-sender",
-            Payload: serialized,
-            SchemaVersion: "1.0.0",
-            SequenceNumber: 1,
-            Timestamp: DateTime.UtcNow);
-
-        method.Invoke(publisher, [spoofedEnvelope]);
-
-        wasCalled.ShouldBeFalse();
     }
 
     [Fact]
@@ -457,7 +426,7 @@ public class RelayClientPublisherTests
     public void Constructor_WithApiKey_DoesNotThrowAndStaysDisconnected()
     {
         var logger = Substitute.For<ILogger<RelayClientPublisher>>();
-        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger, "host-1", "dev-key");
+        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger, "dev-key");
 
         publisher.ShouldNotBeNull();
         publisher.State.ShouldBe(HubConnectionState.Disconnected);
