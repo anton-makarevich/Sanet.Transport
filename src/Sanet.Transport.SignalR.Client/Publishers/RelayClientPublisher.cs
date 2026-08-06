@@ -17,7 +17,6 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
 {
     private readonly HubConnection _hubConnection;
     private readonly string _roomCode;
-    private readonly string? _expectedHostId;
     private readonly ILogger<RelayClientPublisher> _logger;
     private readonly SynchronizationContext? _syncContext;
     private readonly List<Action<TransportMessage>> _subscribers = [];
@@ -76,7 +75,6 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
     /// <param name="roomCode">The 6-character room code.</param>
     /// <param name="sessionToken">The session token issued by the REST room join/create API.</param>
     /// <param name="logger">Logger</param>
-    /// <param name="expectedHostId">Expected host ID</param>
     /// <param name="apiKey">Optional API key appended as a query parameter. Required by hubs
     /// that enforce relay authentication (RelayAuthenticationMiddleware).</param>
     public RelayClientPublisher(
@@ -84,11 +82,9 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
         string roomCode,
         string sessionToken,
         ILogger<RelayClientPublisher> logger,
-        string? expectedHostId = null,
         string? apiKey = null)
     {
         _logger = logger;
-        _expectedHostId = expectedHostId;
         _syncContext = SynchronizationContext.Current;
 
         if (string.IsNullOrWhiteSpace(hubUrl))
@@ -228,14 +224,6 @@ public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
     {
         if (_isDisposed || string.IsNullOrEmpty(envelope.Payload))
         {
-            return;
-        }
-
-        if (_expectedHostId is not null && envelope.SenderId != _expectedHostId)
-        {
-            _logger.LogWarning(
-                "Dropping envelope from unexpected sender {SenderId}; expected {ExpectedHostId}",
-                envelope.SenderId, _expectedHostId);
             return;
         }
 
