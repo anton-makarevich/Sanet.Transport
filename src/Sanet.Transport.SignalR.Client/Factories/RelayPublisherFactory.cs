@@ -66,9 +66,10 @@ public sealed class RelayPublisherFactory : IPublisherFactory
             {
                 await publisher.DisposeAsync();
             }
-            catch
+            catch (Exception disposeException)
             {
-                // Swallow to avoid masking the original failure
+                // Logged at debug level to avoid masking the original failure
+                logger.LogDebug(disposeException, "Failed to dispose publisher after connection failure");
             }
 
             throw;
