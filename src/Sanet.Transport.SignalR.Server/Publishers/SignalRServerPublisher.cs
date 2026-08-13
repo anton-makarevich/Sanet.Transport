@@ -119,4 +119,13 @@ public class SignalRServerPublisher : ITransportPublisher, IDisposable
         
         GC.SuppressFinalize(this);
     }
+
+    /// <summary>
+    /// Asynchronously disposes resources used by the publisher
+    /// </summary>
+    public ValueTask DisposeAsync()
+    {
+        Dispose();
+        return ValueTask.CompletedTask;
+    }
 }

@@ -44,4 +44,36 @@ public class SignalRClientPublisherTests
         // This test just verifies the method doesn't throw
         messageReceived.ShouldBeFalse();
     }
+
+    [Fact]
+    public async Task DisposeAsync_DisposesPublisher()
+    {
+        // Arrange
+        const string hubUrl = "http://localhost:5000/transporthub";
+        var publisher = new SignalRClientPublisher(hubUrl);
+
+        // Act
+        await publisher.DisposeAsync();
+
+        // Assert
+        await Should.ThrowAsync<ObjectDisposedException>(() => publisher.StartAsync());
+        Should.Throw<ObjectDisposedException>(() => publisher.Subscribe(_ => { }));
+        await Should.NotThrowAsync(() => publisher.PublishMessage(new TransportMessage
+        {
+            MessageType = "TestCommand",
+            SourceId = Guid.NewGuid()
+        }));
+    }
+
+    [Fact]
+    public async Task DisposeAsync_MultipleCalls_DoesNotThrow()
+    {
+        // Arrange
+        const string hubUrl = "http://localhost:5000/transporthub";
+        var publisher = new SignalRClientPublisher(hubUrl);
+
+        // Act & Assert
+        await publisher.DisposeAsync();
+        await Should.NotThrowAsync(async () => await publisher.DisposeAsync());
+    }
 }

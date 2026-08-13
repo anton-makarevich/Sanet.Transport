@@ -9,7 +9,7 @@ public class ChannelTransportPublisherTests
     public async Task Subscribe_WhenMessagePublished_SubscriberReceivesMessage()
     {
         // Arrange
-        using var publisher = new ChannelTransportPublisher();
+        await using var publisher = new ChannelTransportPublisher();
         var receivedMessage = false;
         var testMessage = new TransportMessage
         {
@@ -37,8 +37,8 @@ public class ChannelTransportPublisherTests
     public async Task PublishMessage_WithMultipleSubscribers_AllSubscribersReceiveMessage()
     {
         // Arrange
-        using var publisher = new ChannelTransportPublisher();
-        var subscriberCount = 3;
+        await using var publisher = new ChannelTransportPublisher();
+        const int subscriberCount = 3;
         var receivedCount = 0;
         var testMessage = new TransportMessage
         {
@@ -49,7 +49,7 @@ public class ChannelTransportPublisherTests
         };
         
         // Act
-        for (int i = 0; i < subscriberCount; i++)
+        for (var i = 0; i < subscriberCount; i++)
         {
             publisher.Subscribe(msg =>
             {
@@ -69,12 +69,12 @@ public class ChannelTransportPublisherTests
     public async Task PublishMessage_WithMultipleMessages_AllMessagesAreReceived()
     {
         // Arrange
-        using var publisher = new ChannelTransportPublisher();
-        var messageCount = 10;
+        await using var publisher = new ChannelTransportPublisher();
+        const int messageCount = 10;
         var receivedCount = 0;
         var messages = new List<TransportMessage>();
         
-        for (int i = 0; i < messageCount; i++)
+        for (var i = 0; i < messageCount; i++)
         {
             messages.Add(new TransportMessage
             {
@@ -124,7 +124,7 @@ public class ChannelTransportPublisherTests
         receivedCount.ShouldBe(1);
         
         // Dispose the publisher
-        publisher.Dispose();
+        await publisher.DisposeAsync();
         
         // Publish another message after disposal
         await publisher.PublishMessage(new TransportMessage
@@ -144,14 +144,14 @@ public class ChannelTransportPublisherTests
     public async Task PublishMessage_WithCustomCapacity_WorksCorrectly()
     {
         // Arrange
-        using var publisher = new ChannelTransportPublisher(capacity: 5);
+        await using var publisher = new ChannelTransportPublisher(capacity: 5);
         var receivedCount = 0;
-        var messageCount = 10;
+        const int messageCount = 10;
         
         publisher.Subscribe(_ => Interlocked.Increment(ref receivedCount));
         
         // Act - publish messages
-        for (int i = 0; i < messageCount; i++)
+        for (var i = 0; i < messageCount; i++)
         {
             await publisher.PublishMessage(new TransportMessage
             {
@@ -191,10 +191,90 @@ public class ChannelTransportPublisherTests
         publisher.Dispose();
 
         // Assert
-        Should.NotThrow(() =>
+        Should.NotThrow(publisher.Dispose);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_StopsProcessingMessages()
+    {
+        // Arrange
+        var publisher = new ChannelTransportPublisher();
+        var receivedCount = 0;
+
+        publisher.Subscribe(_ => Interlocked.Increment(ref receivedCount));
+
+        // Act - publish a message and verify it's received
+        await publisher.PublishMessage(new TransportMessage
         {
-            publisher.Dispose();
+            MessageType = "TestCommand",
+            SourceId = Guid.NewGuid(),
+            Payload = "{}",
+            Timestamp = DateTime.UtcNow
         });
+
+        await Task.Delay(100);
+        receivedCount.ShouldBe(1);
+
+        // Dispose the publisher asynchronously
+        await publisher.DisposeAsync();
+
+        // Publish another message after disposal
+        await publisher.PublishMessage(new TransportMessage
+        {
+            MessageType = "TestCommand2",
+            SourceId = Guid.NewGuid(),
+            Payload = "{}",
+            Timestamp = DateTime.UtcNow
+        });
+
+        // Assert - the second message should not be processed
+        await Task.Delay(100);
+        receivedCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_MultipleCalls_DoesNotThrow()
+    {
+        // Arrange
+        var publisher = new ChannelTransportPublisher();
+
+        // Act & Assert
+        await publisher.DisposeAsync();
+        await Should.NotThrowAsync(async () => await publisher.DisposeAsync());
+    }
+
+    [Fact]
+    public async Task DisposeAsync_WhenProcessingTaskIsStuck_DoesNotThrow()
+    {
+        // Arrange
+        var publisher = new ChannelTransportPublisher();
+        var subscriberEntered = new ManualResetEventSlim();
+        var releaseSubscriber = false;
+        publisher.Subscribe(_ =>
+        {
+            subscriberEntered.Set();
+            while (!Volatile.Read(ref releaseSubscriber))
+            {
+                Thread.Sleep(10);
+            }
+        });
+
+        await publisher.PublishMessage(new TransportMessage
+        {
+            MessageType = "TestCommand",
+            SourceId = Guid.NewGuid(),
+            Payload = "{}",
+            Timestamp = DateTime.UtcNow
+        });
+
+        // Ensure the processing task is stuck inside the subscriber callback
+        subscriberEntered.Wait(TimeSpan.FromSeconds(5)).ShouldBeTrue();
+
+        // Act & Assert - the 1s completion timeout is swallowed
+        await Should.NotThrowAsync(async () => await publisher.DisposeAsync());
+
+        // Clean up the stuck subscriber so the processing task can complete
+        Volatile.Write(ref releaseSubscriber, true);
     }
 
     [Fact]
@@ -202,7 +282,7 @@ public class ChannelTransportPublisherTests
     {
         // Arrange
         // Use a small delay in the console write to allow time for potential processing issues
-        using var publisher = new ChannelTransportPublisher(); 
+        await using var publisher = new ChannelTransportPublisher(); 
         var subscriber1Received = false;
         var subscriber3Received = false;
         var testMessage = new TransportMessage

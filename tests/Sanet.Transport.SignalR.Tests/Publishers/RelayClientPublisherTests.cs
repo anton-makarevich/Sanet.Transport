@@ -116,13 +116,25 @@ public class RelayClientPublisherTests
         await publisher.DisposeAsync();
 
         // Assert
-        await Should.ThrowAsync<ObjectDisposedException>(() => publisher.StartAsync());
+        await Should.ThrowAsync<ObjectDisposedException>(publisher.StartAsync);
         await Should.ThrowAsync<ObjectDisposedException>(() => publisher.PublishMessage(new TransportMessage
         {
             MessageType = "TestCommand",
             SourceId = Guid.NewGuid()
         }));
         Should.Throw<ObjectDisposedException>(() => publisher.Subscribe(_ => { }));
+    }
+
+    [Fact]
+    public async Task DisposeAsync_MultipleCalls_DoesNotThrow()
+    {
+        // Arrange
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger);
+
+        // Act & Assert
+        await publisher.DisposeAsync();
+        await Should.NotThrowAsync(async () => await publisher.DisposeAsync());
     }
 
     [Fact]
@@ -185,7 +197,7 @@ public class RelayClientPublisherTests
         received.Code.ShouldBe(HubErrorCode.RoomNotFound);
     }
 
-    private static RelayClientPublisher CreatePublisher(ILogger<RelayClientPublisher>? logger = null, string? expectedHostId = null)
+    private static RelayClientPublisher CreatePublisher(ILogger<RelayClientPublisher>? logger = null)
     {
         logger ??= Substitute.For<ILogger<RelayClientPublisher>>();
         var original = SynchronizationContext.Current;
@@ -220,7 +232,7 @@ public class RelayClientPublisherTests
     public void HandleEnvelopeReceived_WithExpectedHostId_AcceptsMatchingSender()
     {
         var logger = Substitute.For<ILogger<RelayClientPublisher>>();
-        var publisher = CreatePublisher(logger, "expected-host");
+        var publisher = CreatePublisher(logger);
         var wasCalled = false;
         publisher.Subscribe(_ => wasCalled = true);
 
@@ -432,18 +444,11 @@ public class RelayClientPublisherTests
         publisher.State.ShouldBe(HubConnectionState.Disconnected);
     }
 
-    private sealed class TestSynchronizationContext : SynchronizationContext
+    private sealed class TestSynchronizationContext(Action onPost) : SynchronizationContext
     {
-        private readonly Action _onPost;
-
-        public TestSynchronizationContext(Action onPost)
-        {
-            _onPost = onPost;
-        }
-
         public override void Post(SendOrPostCallback d, object? state)
         {
-            _onPost();
+            onPost();
             d(state);
         }
     }

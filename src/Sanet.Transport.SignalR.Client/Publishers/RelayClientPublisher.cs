@@ -13,7 +13,7 @@ namespace Sanet.Transport.SignalR.Client.Publishers;
 /// active at construction time, if any. Consumers on UI frameworks (Avalonia, WPF, WinUI) should
 /// construct this publisher on the UI thread to receive callbacks without manual marshaling.
 /// </summary>
-public class RelayClientPublisher : ITransportPublisher, IAsyncDisposable
+public class RelayClientPublisher : ITransportPublisher
 {
     private readonly HubConnection _hubConnection;
     private readonly string _roomCode;

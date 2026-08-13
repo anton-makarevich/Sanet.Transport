@@ -70,7 +70,6 @@ public class RxTransportPublisherTests
         var publisher = new RxTransportPublisher();
         var subscriberStarted = new TaskCompletionSource();
         var subscriberCanFinish = new TaskCompletionSource();
-        var publishReturned = false;
 
         publisher.Subscribe(async _ =>
         {
@@ -87,9 +86,55 @@ public class RxTransportPublisherTests
         });
 
         await subscriberStarted.Task;
-        publishReturned = publishTask.IsCompleted;
+        var publishReturned = publishTask.IsCompleted;
         subscriberCanFinish.SetResult();
 
         publishReturned.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DisposeAsync_DisposesPublisher_SubscriberIsNoLongerNotified()
+    {
+        // Arrange
+        var publisher = new RxTransportPublisher(ImmediateScheduler.Instance);
+        var receivedCount = 0;
+        publisher.Subscribe(_ => Interlocked.Increment(ref receivedCount));
+
+        var testMessage = new TransportMessage
+        {
+            MessageType = "TestCommand",
+            SourceId = Guid.NewGuid(),
+            Payload = "{}",
+            Timestamp = DateTime.UtcNow
+        };
+
+        // Act
+        await publisher.DisposeAsync();
+        await publisher.PublishMessage(testMessage);
+
+        // Assert
+        receivedCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_MultipleCalls_DoesNotThrow()
+    {
+        // Arrange
+        var publisher = new RxTransportPublisher();
+
+        // Act & Assert
+        await publisher.DisposeAsync();
+        Should.NotThrow(async () => await publisher.DisposeAsync());
+    }
+
+    [Fact]
+    public async Task Subscribe_AfterDispose_ThrowsObjectDisposedException()
+    {
+        // Arrange
+        var publisher = new RxTransportPublisher();
+        await publisher.DisposeAsync();
+
+        // Act & Assert
+        Should.Throw<ObjectDisposedException>(() => publisher.Subscribe(_ => { }));
     }
 }

@@ -118,6 +118,15 @@ public class ChannelTransportPublisher : ITransportPublisher, IDisposable
     }
     
     /// <summary>
+    /// Asynchronously disposes resources used by the publisher
+    /// </summary>
+    public ValueTask DisposeAsync()
+    {
+        Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    /// <summary>
     /// Disposes resources used by the publisher
     /// </summary>
     public void Dispose()
@@ -126,15 +135,15 @@ public class ChannelTransportPublisher : ITransportPublisher, IDisposable
         {
             return;
         }
-        
+
         _isDisposed = true;
-        
+
         // Request cancellation
         _cts.Cancel();
-        
+
         // Complete the channel
         _channel.Writer.Complete();
-        
+
         try
         {
             // Wait for the processing task to complete
@@ -144,10 +153,10 @@ public class ChannelTransportPublisher : ITransportPublisher, IDisposable
         {
             // Ignore exceptions during disposal
         }
-        
+
         // Dispose the cancellation token source
         _cts.Dispose();
-        
+
         GC.SuppressFinalize(this);
     }
 }
