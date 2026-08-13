@@ -11,7 +11,8 @@ public sealed record RelayPublisherOptions : PublisherOptions
     public required string HubUrl { get; init; }
 
     /// <summary>
-    /// The 6-character room code.
+    /// The room code. Must be exactly 6 characters, otherwise the constructor of
+    /// <see cref="Publishers.RelayClientPublisher"/> throws an <see cref="ArgumentException"/>.
     /// </summary>
     public required string RoomCode { get; init; }
 
