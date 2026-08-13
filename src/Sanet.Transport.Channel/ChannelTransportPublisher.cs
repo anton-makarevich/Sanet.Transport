@@ -120,35 +120,10 @@ public class ChannelTransportPublisher : ITransportPublisher, IDisposable
     /// <summary>
     /// Asynchronously disposes resources used by the publisher
     /// </summary>
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (_isDisposed)
-        {
-            return;
-        }
-
-        _isDisposed = true;
-
-        // Request cancellation
-        await _cts.CancelAsync().ConfigureAwait(false);
-
-        // Complete the channel
-        _channel.Writer.Complete();
-
-        try
-        {
-            // Wait for the processing task to complete
-            await _processingTask.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
-        }
-        catch (Exception)
-        {
-            // Ignore exceptions during disposal
-        }
-
-        // Dispose the cancellation token source
-        _cts.Dispose();
-
-        GC.SuppressFinalize(this);
+        Dispose();
+        return ValueTask.CompletedTask;
     }
 
     /// <summary>
