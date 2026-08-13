@@ -44,6 +44,8 @@ public class RelayClientPublisherTests
     [InlineData(ValidHubUrl, "", ValidSessionToken)]
     [InlineData(ValidHubUrl, null, ValidSessionToken)]
     [InlineData(ValidHubUrl, "   ", ValidSessionToken)]
+    [InlineData(ValidHubUrl, "ABC", ValidSessionToken)]
+    [InlineData(ValidHubUrl, "ABCDEFG", ValidSessionToken)]
     public void Constructor_WithInvalidRoomCode_ThrowsArgumentException(string hubUrl, string? roomCode, string sessionToken)
     {
         var logger = Substitute.For<ILogger<RelayClientPublisher>>();

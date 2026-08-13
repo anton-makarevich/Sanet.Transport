@@ -92,9 +92,9 @@ public class RelayClientPublisher : ITransportPublisher
             throw new ArgumentException("Hub URL cannot be null or empty", nameof(hubUrl));
         }
 
-        if (string.IsNullOrWhiteSpace(roomCode))
+        if (roomCode is null || roomCode.Length != 6)
         {
-            throw new ArgumentException("Room code cannot be null or empty", nameof(roomCode));
+            throw new ArgumentException("Room code must be exactly 6 characters", nameof(roomCode));
         }
 
         if (string.IsNullOrWhiteSpace(sessionToken))
