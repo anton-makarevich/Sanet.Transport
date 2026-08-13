@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Sanet.Transport.Channel</RootNamespace>
     <AssemblyName>Sanet.Transport.Channel</AssemblyName>
-    <Version>1.2.0</Version>
+    <Version>1.3.0</Version>
     
     <!-- NuGet package properties -->
     <PackageId>Sanet.Transport.Channel</PackageId>
