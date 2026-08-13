@@ -11,6 +11,8 @@ Sanet.Transport provides the core interfaces and message definitions for a simpl
 ## Key Components
 
 - **ITransportPublisher**: Core interface for publishing and subscribing to messages
+- **IPublisherFactory**: Creates transport publishers from transport-specific options
+- **PublisherOptions**: Marker base type for transport-specific publisher options
 - **TransportMessage**: Standard message format for all transport implementations
 
 ## Basic Usage
