@@ -11,6 +11,7 @@ public class RxTransportPublisher : ITransportPublisher
 {
     private readonly Subject<TransportMessage> _messageSubject = new();
     private readonly IScheduler _scheduler;
+    private bool _isDisposed;
 
     public RxTransportPublisher(IScheduler? scheduler = null)
     {
@@ -24,6 +25,11 @@ public class RxTransportPublisher : ITransportPublisher
     /// <returns>A task representing the asynchronous operation</returns>
     public Task PublishMessage(TransportMessage message)
     {
+        if (_isDisposed)
+        {
+            return Task.CompletedTask;
+        }
+
         _messageSubject.OnNext(message);
         return Task.CompletedTask;
     }
@@ -34,9 +40,31 @@ public class RxTransportPublisher : ITransportPublisher
     /// <param name="onMessageReceived">Action to call when a message is received</param>
     public void Subscribe(Action<TransportMessage> onMessageReceived)
     {
+        if (_isDisposed)
+        {
+            throw new ObjectDisposedException(nameof(RxTransportPublisher));
+        }
+
         _messageSubject
             .AsObservable()
             .ObserveOn(_scheduler)
             .Subscribe(onMessageReceived);
+    }
+
+    /// <summary>
+    /// Asynchronously disposes resources used by the publisher
+    /// </summary>
+    public ValueTask DisposeAsync()
+    {
+        if (_isDisposed)
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        _isDisposed = true;
+        _messageSubject.Dispose();
+
+        GC.SuppressFinalize(this);
+        return ValueTask.CompletedTask;
     }
 }

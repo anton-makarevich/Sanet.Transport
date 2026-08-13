@@ -36,7 +36,7 @@ public class SignalRServerPublisherTests
         // Assert
         await clientProxy.Received(1).SendCoreAsync(
             "ReceiveMessage", 
-            Arg.Is<object[]>(args => args.Length == 1 && args[0] is TransportMessage), 
+            Arg.Is<object[]>(args => args != null && args.Length == 1 && args[0] is TransportMessage), 
             Arg.Any<CancellationToken>());
     }
     
@@ -79,7 +79,7 @@ public class SignalRServerPublisherTests
         var hubContext = Substitute.For<IHubContext<TransportHub>>();
         var publisher = new SignalRServerPublisher(hubContext);
         
-        var subscriberCount = 3;
+        const int subscriberCount = 3;
         var receivedCount = 0;
         var testMessage = new TransportMessage
         {
@@ -132,5 +132,43 @@ public class SignalRServerPublisherTests
         
         // Assert - the subscriber should not be notified after disposal
         receivedMessage.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task DisposeAsync_UnsubscribesFromHubEvents()
+    {
+        // Arrange
+        var hubContext = Substitute.For<IHubContext<TransportHub>>();
+        var publisher = new SignalRServerPublisher(hubContext);
+
+        var receivedMessage = false;
+        publisher.Subscribe(_ => receivedMessage = true);
+
+        // Act
+        await publisher.DisposeAsync();
+
+        // Simulate a message received from the hub
+        TransportHub.SimulateMessageReceived(new TransportMessage
+        {
+            MessageType = "TestCommand",
+            SourceId = Guid.NewGuid(),
+            Payload = "{}",
+            Timestamp = DateTime.UtcNow
+        });
+
+        // Assert - the subscriber should not be notified after disposal
+        receivedMessage.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task DisposeAsync_MultipleCalls_DoesNotThrow()
+    {
+        // Arrange
+        var hubContext = Substitute.For<IHubContext<TransportHub>>();
+        var publisher = new SignalRServerPublisher(hubContext);
+
+        // Act & Assert
+        await publisher.DisposeAsync();
+        await Should.NotThrowAsync(async () => await publisher.DisposeAsync());
     }
 }

@@ -5,7 +5,7 @@ namespace Sanet.Transport.SignalR.Client.Publishers;
 /// <summary>
 /// Client-side implementation of ITransportPublisher using SignalR
 /// </summary>
-public class SignalRClientPublisher : ITransportPublisher, IAsyncDisposable
+public class SignalRClientPublisher : ITransportPublisher
 {
     private readonly HubConnection _hubConnection;
     private readonly List<Action<TransportMessage>> _subscribers = [];
