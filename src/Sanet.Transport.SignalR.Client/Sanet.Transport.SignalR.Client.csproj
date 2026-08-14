@@ -10,11 +10,7 @@
     
     <!-- NuGet package properties -->
     <PackageId>Sanet.Transport.SignalR.Client</PackageId>
-    <Version>1.3.0</Version>
-    <Authors>Anton Makarevich</Authors>
-    <Company>Sanet</Company>
     <Description>Client components for SignalR implementation of the Sanet.Transport abstractions. Includes discovery and client publisher.</Description>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/anton-makarevich/Sanet.Transport</PackageProjectUrl>
     <RepositoryUrl>https://github.com/anton-makarevich/Sanet.Transport</RepositoryUrl>
     <PackageTags>transport;signalr;messaging;client;discovery</PackageTags>

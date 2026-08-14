@@ -19,7 +19,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: 10.x
+          global-json-file: global.json
 
       - name: Run Rx Tests
         run: dotnet test tests/Sanet.Transport.Rx.Tests/Sanet.Transport.Rx.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport.Rx]*
@@ -49,7 +49,7 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.x'
+          global-json-file: global.json
 
       - name: Create nuget packages
         run: |

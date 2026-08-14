@@ -1,0 +1,15 @@
+**/bin
+**/obj
+.git
+.github
+.agents
+.idea
+.serena
+.claude
+.vs
+docs
+tests
+samples
+nuget
+*.user
+*.suo

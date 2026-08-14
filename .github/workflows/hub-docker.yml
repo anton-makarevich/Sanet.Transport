@@ -57,8 +57,8 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
         with:
-          context: ./src/Sanet.Transport.SignalR.Hub
-          file: Dockerfile
+          context: .
+          file: src/Sanet.Transport.SignalR.Hub/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -90,8 +90,8 @@ jobs:
       - name: Build Docker image (no push)
         uses: docker/build-push-action@v7
         with:
-          context: ./src/Sanet.Transport.SignalR.Hub
-          file: Dockerfile
+          context: .
+          file: src/Sanet.Transport.SignalR.Hub/Dockerfile
           push: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
