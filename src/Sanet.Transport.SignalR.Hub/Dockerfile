@@ -8,19 +8,18 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Copy csproj file and restore dependencies
-COPY ["src/MakaMek.Hub/MakaMek.Hub.csproj", "src/MakaMek.Hub/"]
-RUN dotnet restore "src/MakaMek.Hub/MakaMek.Hub.csproj"
+COPY ["Sanet.Transport.SignalR.Hub.csproj", "."]
+RUN dotnet restore "Sanet.Transport.SignalR.Hub.csproj"
 
 # Copy the rest of the source code
 COPY . .
 
 # Build the application
-WORKDIR "/src/src/MakaMek.Hub"
-RUN dotnet build "MakaMek.Hub.csproj" -c Release -o /app/build
+RUN dotnet build "Sanet.Transport.SignalR.Hub.csproj" -c Release -o /app/build
 
 # Publish the application
 FROM build AS publish
-RUN dotnet publish "MakaMek.Hub.csproj" -c Release -o /app/publish
+RUN dotnet publish "Sanet.Transport.SignalR.Hub.csproj" -c Release -o /app/publish
 
 # Build the final runtime image
 FROM base AS final
@@ -43,4 +42,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
 USER appuser
-ENTRYPOINT ["dotnet", "MakaMek.Hub.dll"]
+ENTRYPOINT ["dotnet", "Sanet.Transport.SignalR.Hub.dll"]

@@ -158,7 +158,7 @@ app.MapGet("/health", () =>
     return Results.Ok(new
     {
         status = "healthy",
-        service = "MakaMek.Hub",
+        service = "Sanet.Transport.SignalR.Hub",
         version
     });
 });

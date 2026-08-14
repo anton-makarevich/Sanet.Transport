@@ -4,7 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Description>Cloud relay room-management service for MakaMek.</Description>
+    <Description>Cloud relay room-management service.</Description>
   </PropertyGroup>
 
   <ItemGroup>

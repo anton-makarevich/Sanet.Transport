@@ -1,4 +1,4 @@
-name: MakaMek Hub
+name: Sanet.Transport Hub
 permissions:
   contents: read
 on:
@@ -8,8 +8,8 @@ on:
 
   pull_request:
     paths:
-      - 'src/MakaMek.Hub/**'
-      - 'tests/MakaMek.Hub.Tests/**'
+      - 'src/Sanet.Transport.SignalR.Hub/**'
+      - 'tests/Sanet.Transport.SignalR.Hub.Tests/**'
       - '.github/workflows/hub.yml'
   workflow_dispatch:
 
@@ -31,12 +31,12 @@ jobs:
           dotnet-version: 10.x
 
       - name: Run Hub tests
-        run: dotnet test tests/MakaMek.Hub.Tests/MakaMek.Hub.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.MakaMek.Hub]*
+        run: dotnet test tests/Sanet.Transport.SignalR.Hub.Tests/Sanet.Transport.SignalR.Hub.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport.SignalR.Hub]*
 
       - name: Upload Hub tests results
         uses: codecov/codecov-action@v7
         with:
-          files: ./tests/MakaMek.Hub.Tests/coverage.opencover.xml
+          files: ./tests/Sanet.Transport.SignalR.Hub.Tests/coverage.opencover.xml
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: hub
           fail_ci_if_error: true
@@ -45,10 +45,10 @@ jobs:
         if: github.event_name == 'pull_request'
         uses: anton-makarevich/Cocodif@v0.2.2
         with:
-          coverage-files: ./tests/MakaMek.Hub.Tests/coverage.opencover.xml
+          coverage-files: ./tests/Sanet.Transport.SignalR.Hub.Tests/coverage.opencover.xml
           title: Hub Coverage
           comment-marker: '<!-- cocodif-hub -->'
-          include: 'src/MakaMek.Hub/**'
+          include: 'src/Sanet.Transport.SignalR.Hub/**'
           exclude: '**/obj/**,**/bin/**'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,6 +1,6 @@
-# MakaMek Hub
+# Sanet.Transport.SignalR.Hub
 
-Cloud relay room-management service initially developed for MakaMek. Hosts a SignalR hub for real-time game relay and REST endpoints for room lifecycle management.
+Cloud relay room-management service. Hosts a SignalR hub for real-time message relay and REST endpoints for room lifecycle management.
 
 ## Prerequisites
 
@@ -38,7 +38,7 @@ export ASPNETCORE_ENVIRONMENT="Development" # bash
 ```
 
 ```bash
-dotnet run --project src/MakaMek.Hub/MakaMek.Hub.csproj
+dotnet run --project src/Sanet.Transport.SignalR.Hub/Sanet.Transport.SignalR.Hub.csproj
 ```
 
 The service starts on `http://localhost:5000` (ASP.NET default) with the `Development` environment profile.
@@ -54,11 +54,11 @@ Or add `"ApiKey": "dev-key"` to the `Hub` section in `appsettings.Development.js
 
 ### With Docker
 
-Build from the repo root:
+Build from the project directory:
 
 ```bash
-docker build -t makamek-hub -f src/MakaMek.Hub/Dockerfile .
-docker run -p 8080:8080 -e Hub__ApiKey="dev-key" makamek-hub
+docker build -t sanet-transport-hub src/Sanet.Transport.SignalR.Hub
+docker run -p 8080:8080 -e Hub__ApiKey="dev-key" sanet-transport-hub
 ```
 
 The container listens on `http://localhost:8080` in `Production` mode.
@@ -73,14 +73,13 @@ The container listens on `http://localhost:8080` in `Production` mode.
 | POST | `/api/rooms/{roomCode}/ready` | Mark a room ready to accept joiners (requires `X-Api-Key` + `Session-Token` header, host only) |
 | POST | `/api/rooms/{roomCode}/close` | Close a room (requires `X-Api-Key` + `Session-Token` header, host only) |
 | DELETE | `/api/rooms/{roomCode}/members/{playerId}` | Remove a member (requires `X-Api-Key` + `Session-Token` header, host only) |
-| WebSocket | `/hubs/relay` | SignalR hub for game relay (requires `apiKey` and `sessionToken` query parameters) |
-
+| WebSocket | `/hubs/relay` | SignalR hub for message relay (requires `apiKey` and `sessionToken` query parameters) |
 
 ## Connecting Clients
 
-Once Hub is running and the API key is set, open 2 terminals (one for host, another one for client) and run MakaMek.Desktop app in every terminal, setting ApiKey and Hub uri:
+Once the Hub is running and the API key is set, any client built on `Sanet.Transport.SignalR.Client` can join a room. Connect the relay publisher to the hub URL, e.g.:
+
 ```bash
-$env:MAKAMEK_RELAY_API_KEY = "dev-key"
-$env:MAKAMEK_RELAY_BASE_URL = "http://localhost:5000"
-dotnet run --project src/MakaMek.Avalonia/MakaMek.Avalonia.Desktop/MakaMek.Avalonia.Desktop.csproj 
+$env:RELAY_API_KEY = "dev-key"
+$env:RELAY_BASE_URL = "http://localhost:5000"
 ```

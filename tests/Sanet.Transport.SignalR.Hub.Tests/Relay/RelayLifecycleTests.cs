@@ -12,7 +12,7 @@ using Sanet.Transport.SignalR.Hub.Relay;
 using Sanet.Transport.SignalR.Hub.Security;
 using Shouldly;
 using HubError = Sanet.Transport.SignalR.Hub.Contracts.HubError;
-using HubErrorCode = Sanet.Transport.SignalR.Client.Relay.HubErrorCode;
+using HubErrorCode = Sanet.Transport.SignalR.Hub.Contracts.HubErrorCode;
 
 namespace Sanet.Transport.SignalR.Hub.Tests.Relay;
 
