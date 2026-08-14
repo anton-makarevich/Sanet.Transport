@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="Sanet.MakaMek.Hub.Tests" />
+    <InternalsVisibleTo Include="Sanet.Transport.SignalR.Hub.Tests" />
   </ItemGroup>
 
   <ItemGroup>
