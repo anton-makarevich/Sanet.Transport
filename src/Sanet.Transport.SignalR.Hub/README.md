@@ -54,10 +54,10 @@ Or add `"ApiKey": "dev-key"` to the `Hub` section in `appsettings.Development.js
 
 ### With Docker
 
-Build from the project directory:
+Build from the repository root:
 
 ```bash
-docker build -t sanet-transport-hub src/Sanet.Transport.SignalR.Hub
+docker build -f src/Sanet.Transport.SignalR.Hub/Dockerfile -t sanet-transport-hub .
 docker run -p 8080:8080 -e Hub__ApiKey="dev-key" sanet-transport-hub
 ```
 

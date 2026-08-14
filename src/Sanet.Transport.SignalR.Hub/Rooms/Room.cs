@@ -91,6 +91,8 @@ public sealed class Room
 
     internal bool HasSession(string token) => _sessions.ContainsKey(token);
 
+    internal IReadOnlyCollection<string> SessionTokens => _sessions.Keys;
+
     internal bool TryGetSession(string token, out RoomSession session) =>
         _sessions.TryGetValue(token, out session!);
 
@@ -186,6 +188,8 @@ public sealed class Room
         {
             _sessions.Remove(token);
         }
+
+        _connections.Remove(deviceSessionId);
 
         return true;
     }

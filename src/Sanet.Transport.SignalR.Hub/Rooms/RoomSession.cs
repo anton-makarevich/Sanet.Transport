@@ -8,4 +8,11 @@ public sealed record RoomSession(
     string RoomCode,
     Guid DeviceSessionId,
     RoomRole Role,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset ExpiresAt)
+{
+    /// <summary>
+    /// Never exposes the token, which is an opaque secret credential.
+    /// </summary>
+    public override string ToString()
+        => $"RoomSession {{ RoomCode = {RoomCode}, DeviceSessionId = {DeviceSessionId}, Role = {Role}, ExpiresAt = {ExpiresAt} }}";
+}

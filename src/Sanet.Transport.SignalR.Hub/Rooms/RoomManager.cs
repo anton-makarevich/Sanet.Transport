@@ -11,10 +11,11 @@ namespace Sanet.Transport.SignalR.Hub.Rooms;
 /// </summary>
 public sealed class RoomManager : IRoomManager
 {
-    private const int MaximumCodeGenerationAttempts = 128;
+    internal const int MaximumCodeGenerationAttempts = 128;
 
     private readonly Lock _sync = new();
-    private readonly Dictionary<string, Room> _rooms = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Room> _rooms = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Room> _sessionsByToken = new(StringComparer.Ordinal);
     private readonly IRoomCodeGenerator _roomCodeGenerator;
     private readonly TimeProvider _timeProvider;
     private readonly int _maxConcurrentRooms;
@@ -72,6 +73,7 @@ public sealed class RoomManager : IRoomManager
             var room = new Room(roomCode, hostGameId, host, session, now, expiresAt);
 
             _rooms.Add(roomCode, room);
+            SyncSessionIndex(room);
 
             _logger.LogInformation(
                 "Room {RoomCode} created for device session {DeviceSessionId}; expires {ExpiresAt}; {ActiveRooms} active room(s)",
@@ -113,6 +115,7 @@ public sealed class RoomManager : IRoomManager
                     "Join rejected for room {RoomCode}: room dissolved",
                     roomCode);
                 room.RevokeAllSessions();
+                SyncSessionIndex(room);
                 _rooms.Remove(roomCode);
                 return RoomJoinResult.NotFound();
             }
@@ -142,6 +145,7 @@ public sealed class RoomManager : IRoomManager
                     now,
                     _roomTtl,
                     GenerateSessionToken);
+                SyncSessionIndex(room);
 
                 _logger.LogInformation(
                     "Device session {DeviceSessionId} rejoined room {RoomCode}; {MemberCount} member(s) now in the room",
@@ -175,6 +179,7 @@ public sealed class RoomManager : IRoomManager
                 now,
                 _roomTtl,
                 GenerateSessionToken);
+            SyncSessionIndex(room);
 
             _logger.LogInformation(
                 "Device session {DeviceSessionId} joined room {RoomCode}; {MemberCount} member(s) now in the room",
@@ -312,6 +317,7 @@ public sealed class RoomManager : IRoomManager
             }
 
             room.RemoveMember(targetDeviceSessionId);
+            SyncSessionIndex(room);
             _logger.LogInformation(
                 "Device session {DeviceSessionId} removed from room {RoomCode}",
                 targetDeviceSessionId,
@@ -391,6 +397,7 @@ public sealed class RoomManager : IRoomManager
             if (room.IsDissolvedAt(now))
             {
                 room.RevokeAllSessions();
+                SyncSessionIndex(room);
                 _rooms.Remove(roomCode);
                 return false;
             }
@@ -441,6 +448,7 @@ public sealed class RoomManager : IRoomManager
             if (room.IsDissolvedAt(now))
             {
                 room.RevokeAllSessions();
+                SyncSessionIndex(room);
                 _rooms.Remove(roomCode);
                 _logger.LogInformation(
                     "Room {RoomCode} purged after dissolution deadline passed",
@@ -467,17 +475,11 @@ public sealed class RoomManager : IRoomManager
 
             var now = _timeProvider.GetUtcNow();
 
-            _logger.LogWarning(
-                "TMPDIAG CancelRoomDissolution room {RoomCode}: now {Now}, deadline {Deadline}, dissolving {IsDissolving}",
-                roomCode,
-                now,
-                room.DissolutionDeadline,
-                room.IsDissolving);
-
             // Terminal deadline: purge instead of mutating a dissolved room.
             if (room.IsDissolvedAt(now))
             {
                 room.RevokeAllSessions();
+                SyncSessionIndex(room);
                 _rooms.Remove(roomCode);
                 _logger.LogInformation(
                     "Room {RoomCode} purged after dissolution deadline passed",
@@ -508,44 +510,67 @@ public sealed class RoomManager : IRoomManager
             var now = _timeProvider.GetUtcNow();
             RemoveExpiredRooms(now);
 
-            foreach (var room in _rooms.Values)
+            if (!_sessionsByToken.TryGetValue(sessionToken, out var room))
             {
-                if (!room.TryGetSession(sessionToken, out var session))
-                {
-                    continue;
-                }
-
-                // Defense in depth: token must still be bound to the room that holds it.
-                if (!string.Equals(session.RoomCode, room.RoomCode, StringComparison.Ordinal))
-                {
-                    _logger.LogWarning(
-                        "Session token for device session {DeviceSessionId} rejected: token is not bound to room {RoomCode}",
-                        session.DeviceSessionId,
-                        room.RoomCode);
-                    return null;
-                }
-
-                if (room.IsExpiredAt(now) || session.ExpiresAt <= now)
-                {
-                    _logger.LogWarning(
-                        "Session token for device session {DeviceSessionId} rejected: room {RoomCode} expired",
-                        session.DeviceSessionId,
-                        room.RoomCode);
-                    return null;
-                }
-
-                _logger.LogDebug(
-                    "Session authenticated for device session {DeviceSessionId} in room {RoomCode} as {Role}",
-                    session.DeviceSessionId,
-                    room.RoomCode,
-                    session.Role);
-
-                return session;
+                _logger.LogWarning(
+                    "Session token rejected: no matching session found in any room");
+                return null;
             }
 
-            _logger.LogWarning(
-                "Session token rejected: no matching session found in any room");
-            return null;
+            if (!room.TryGetSession(sessionToken, out var session))
+            {
+                // Stale index entry (token revoked since the room was indexed) - drop it.
+                _sessionsByToken.Remove(sessionToken);
+                _logger.LogWarning(
+                    "Session token rejected: no matching session found in any room");
+                return null;
+            }
+
+            // Defense in depth: token must still be bound to the room that holds it.
+            if (!string.Equals(session.RoomCode, room.RoomCode, StringComparison.Ordinal))
+            {
+                _logger.LogWarning(
+                    "Session token for device session {DeviceSessionId} rejected: token is not bound to room {RoomCode}",
+                    session.DeviceSessionId,
+                    room.RoomCode);
+                return null;
+            }
+
+            if (room.IsExpiredAt(now) || session.ExpiresAt <= now)
+            {
+                _logger.LogWarning(
+                    "Session token for device session {DeviceSessionId} rejected: room {RoomCode} expired",
+                    session.DeviceSessionId,
+                    room.RoomCode);
+                return null;
+            }
+
+            _logger.LogDebug(
+                "Session authenticated for device session {DeviceSessionId} in room {RoomCode} as {Role}",
+                session.DeviceSessionId,
+                room.RoomCode,
+                session.Role);
+
+            return session;
+        }
+    }
+
+    private void SyncSessionIndex(Room room)
+    {
+        var currentTokens = room.SessionTokens;
+        var tokensToRemove = _sessionsByToken
+            .Where(entry => entry.Value == room && !currentTokens.Contains(entry.Key))
+            .Select(entry => entry.Key)
+            .ToArray();
+
+        foreach (var token in tokensToRemove)
+        {
+            _sessionsByToken.Remove(token);
+        }
+
+        foreach (var token in currentTokens)
+        {
+            _sessionsByToken[token] = room;
         }
     }
 
@@ -573,7 +598,9 @@ public sealed class RoomManager : IRoomManager
 
         foreach (var roomCode in expiredRoomCodes)
         {
-            _rooms[roomCode].RevokeAllSessions();
+            var room = _rooms[roomCode];
+            room.RevokeAllSessions();
+            SyncSessionIndex(room);
             _rooms.Remove(roomCode);
             _logger.LogInformation("Room {RoomCode} garbage-collected (expired or dissolved)", roomCode);
         }

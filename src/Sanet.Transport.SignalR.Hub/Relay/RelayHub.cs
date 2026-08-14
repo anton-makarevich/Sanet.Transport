@@ -5,8 +5,6 @@ using Microsoft.Extensions.Options;
 using Sanet.Transport.SignalR.Client.Relay;
 using Sanet.Transport.SignalR.Hub.Rooms;
 using Sanet.Transport.SignalR.Hub.Security;
-using HubError = Sanet.Transport.SignalR.Hub.Contracts.HubError;
-using HubErrorCode = Sanet.Transport.SignalR.Hub.Contracts.HubErrorCode;
 using HubOptions = Sanet.Transport.SignalR.Hub.Configuration.HubOptions;
 
 namespace Sanet.Transport.SignalR.Hub.Relay;
@@ -86,6 +84,11 @@ public sealed class RelayHub : Hub<IRelayHub>
                 session.DeviceSessionId,
                 session.RoomCode);
 
+            await Clients.Client(replacedConnectionId).OnError(new HubError(
+                HubErrorCode.ConnectionSuperseded,
+                "This connection was superseded by a newer connection from the same device session.",
+                RoomCode: session.RoomCode));
+
             await Groups.RemoveFromGroupAsync(replacedConnectionId, session.RoomCode);
         }
 
@@ -146,6 +149,15 @@ public sealed class RelayHub : Hub<IRelayHub>
             throw new HubException("Payload must not be null.");
         }
 
+        if (!_rateLimiter.TryConsume(Context.ConnectionId))
+        {
+            _logger.LogWarning(
+                "Relay call from connection {ConnectionId} in room {RoomCode} rejected: per-connection rate limit exceeded",
+                Context.ConnectionId,
+                session.RoomCode);
+            throw new HubException(nameof(HubErrorCode.RateLimited));
+        }
+
         var payloadBytes = Encoding.UTF8.GetByteCount(message.Payload);
         if (payloadBytes > _options.Value.MaxRelayPayloadBytes)
         {
@@ -156,15 +168,6 @@ public sealed class RelayHub : Hub<IRelayHub>
                 payloadBytes,
                 _options.Value.MaxRelayPayloadBytes);
             throw new HubException(nameof(HubErrorCode.MessageTooLarge));
-        }
-
-        if (!_rateLimiter.TryConsume(Context.ConnectionId))
-        {
-            _logger.LogWarning(
-                "Relay call from connection {ConnectionId} in room {RoomCode} rejected: per-connection rate limit exceeded",
-                Context.ConnectionId,
-                session.RoomCode);
-            throw new HubException(nameof(HubErrorCode.RateLimited));
         }
 
         // Reject calls from a superseded (stale) connection.
@@ -222,7 +225,7 @@ public sealed class RelayHub : Hub<IRelayHub>
                     await Clients.Group(session.RoomCode).OnError(new HubError(
                         HubErrorCode.HostDisconnected,
                         "The room host disconnected.",
-                        DeviceSessionId: session.DeviceSessionId));
+                        RoomCode: session.RoomCode));
                 }
                 else
                 {

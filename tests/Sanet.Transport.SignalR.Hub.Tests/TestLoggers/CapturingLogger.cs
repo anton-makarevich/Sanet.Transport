@@ -21,9 +21,25 @@ public sealed class CapturingLogger<T>(LogLevel minimumLevel = LogLevel.Trace) :
         Exception? exception,
         Func<TState, Exception?, string> formatter)
     {
-        Entries.Add((logLevel, formatter(state, exception)));
+        if (!IsEnabled(logLevel))
+        {
+            return;
+        }
+
+        lock (Entries)
+        {
+            Entries.Add((logLevel, formatter(state, exception)));
+        }
     }
 
-    public IEnumerable<string> GetMessages(LogLevel level) =>
-        Entries.Where(entry => entry.Level == level).Select(entry => entry.Message);
+    public IEnumerable<string> GetMessages(LogLevel level)
+    {
+        lock (Entries)
+        {
+            return Entries
+                .Where(entry => entry.Level == level)
+                .Select(entry => entry.Message)
+                .ToArray();
+        }
+    }
 }

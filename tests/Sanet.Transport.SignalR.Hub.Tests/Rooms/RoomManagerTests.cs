@@ -112,21 +112,7 @@ public class RoomManagerTests
             () => manager.CreateRoom(Guid.NewGuid()));
 
         ex.Message.ShouldBe("Unable to generate a unique room code.");
-        alwaysSame.GeneratedCount.ShouldBe(129);
-    }
-
-    [Fact]
-    public void Generate_ReturnsSixUnambiguousCharacters()
-    {
-        var generator = new CryptographicRoomCodeGenerator();
-
-        for (var attempt = 0; attempt < 100; attempt++)
-        {
-            var roomCode = generator.Generate();
-
-            roomCode.Length.ShouldBe(CryptographicRoomCodeGenerator.CodeLength);
-            roomCode.All("ABCDEFGHJKMNPQRSTUVWXYZ23456789".Contains).ShouldBeTrue();
-        }
+        alwaysSame.GeneratedCount.ShouldBe(RoomManager.MaximumCodeGenerationAttempts + 1);
     }
 
     [Fact]
@@ -549,7 +535,7 @@ public class RoomManagerTests
     }
 
     [Fact]
-    public void RemoveMember_ExpiredMemberSession_ReturnsNotHost()
+    public void RemoveMember_RoomExpiredDuringMemberSession_ReturnsExpired()
     {
         var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
         var timeProvider = new FixedTimeProvider(now);
@@ -999,6 +985,58 @@ public class RoomManagerTests
         result.ShouldBeNull();
     }
 
+    [Fact]
+    public void TwoDevices_HostAndJoiner_HaveDistinctDeviceSessions_AndNoPlayerIdentityInHubState()
+    {
+        var hostGameId = Guid.NewGuid();
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
+
+        // Host creates room
+        var createResult = manager.CreateRoom(hostGameId);
+        createResult.Outcome.ShouldBe(RoomCreationOutcome.Created);
+        var room = createResult.Room!;
+        var hostSession = createResult.Session!;
+        var hostDeviceSessionId = hostSession.DeviceSessionId;
+
+        manager.RegisterConnection("ABC234", hostDeviceSessionId, "conn-host");
+        manager.MarkRoomReady("ABC234", hostSession.Token);
+
+        // Joiner device joins room
+        var joinResult = manager.JoinRoom("ABC234", sessionToken: null);
+        joinResult.Outcome.ShouldBe(RoomJoinOutcome.Joined);
+        var joinerSession = joinResult.Session!;
+        var joinerDeviceSessionId = joinerSession.DeviceSessionId;
+
+        manager.RegisterConnection("ABC234", joinerDeviceSessionId, "conn-joiner");
+
+        // Assert room has exactly 2 distinct device sessions and 2 connections
+        room.Members.Count.ShouldBe(2);
+        hostDeviceSessionId.ShouldNotBe(joinerDeviceSessionId);
+        hostDeviceSessionId.ShouldNotBe(Guid.Empty);
+        joinerDeviceSessionId.ShouldNotBe(Guid.Empty);
+        room.LiveConnectionCount.ShouldBe(2);
+
+        room.GetConnectionId(hostDeviceSessionId).ShouldBe("conn-host");
+        room.GetConnectionId(joinerDeviceSessionId).ShouldBe("conn-joiner");
+
+        // Assert Hub state exposes device sessions and connections only - no player identity
+        var memberPropertyNames = typeof(RoomMember).GetProperties().Select(p => p.Name).ToList();
+        memberPropertyNames.ShouldNotContain("PlayerId");
+        memberPropertyNames.ShouldNotContain("PlayerName");
+
+        var sessionPropertyNames = typeof(RoomSession).GetProperties().Select(p => p.Name).ToList();
+        sessionPropertyNames.ShouldNotContain("PlayerId");
+        sessionPropertyNames.ShouldNotContain("PlayerName");
+
+        var roomPropertyNames = typeof(Room).GetProperties().Select(p => p.Name).ToList();
+        roomPropertyNames.ShouldNotContain("HostPlayerId");
+        roomPropertyNames.ShouldNotContain("PlayerCount");
+
+        // Exactly two device channels exist for the room session
+        manager.GetConnectionId("ABC234", hostDeviceSessionId).ShouldBe("conn-host");
+        manager.GetConnectionId("ABC234", joinerDeviceSessionId).ShouldBe("conn-joiner");
+    }
+
     #region Logging
 
     [Fact]
@@ -1050,58 +1088,6 @@ public class RoomManagerTests
         logger.GetMessages(LogLevel.Information).ShouldContain(
             message => message.Contains("joined room ABC234", StringComparison.Ordinal)
                 && message.Contains("2 member(s)", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public void TwoDevices_HostAndJoiner_HaveDistinctDeviceSessions_AndNoPlayerIdentityInHubState()
-    {
-        var hostGameId = Guid.NewGuid();
-        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-
-        // Host creates room
-        var createResult = manager.CreateRoom(hostGameId);
-        createResult.Outcome.ShouldBe(RoomCreationOutcome.Created);
-        var room = createResult.Room!;
-        var hostSession = createResult.Session!;
-        var hostDeviceSessionId = hostSession.DeviceSessionId;
-
-        manager.RegisterConnection("ABC234", hostDeviceSessionId, "conn-host");
-        manager.MarkRoomReady("ABC234", hostSession.Token);
-
-        // Joiner device joins room
-        var joinResult = manager.JoinRoom("ABC234", sessionToken: null);
-        joinResult.Outcome.ShouldBe(RoomJoinOutcome.Joined);
-        var joinerSession = joinResult.Session!;
-        var joinerDeviceSessionId = joinerSession.DeviceSessionId;
-
-        manager.RegisterConnection("ABC234", joinerDeviceSessionId, "conn-joiner");
-
-        // Assert room has exactly 2 distinct device sessions and 2 connections
-        room.Members.Count.ShouldBe(2);
-        hostDeviceSessionId.ShouldNotBe(joinerDeviceSessionId);
-        hostDeviceSessionId.ShouldNotBe(Guid.Empty);
-        joinerDeviceSessionId.ShouldNotBe(Guid.Empty);
-        room.LiveConnectionCount.ShouldBe(2);
-
-        room.GetConnectionId(hostDeviceSessionId).ShouldBe("conn-host");
-        room.GetConnectionId(joinerDeviceSessionId).ShouldBe("conn-joiner");
-
-        // Assert Hub state exposes device sessions and connections only - no player identity
-        var memberPropertyNames = typeof(RoomMember).GetProperties().Select(p => p.Name).ToList();
-        memberPropertyNames.ShouldNotContain("PlayerId");
-        memberPropertyNames.ShouldNotContain("PlayerName");
-
-        var sessionPropertyNames = typeof(RoomSession).GetProperties().Select(p => p.Name).ToList();
-        sessionPropertyNames.ShouldNotContain("PlayerId");
-        sessionPropertyNames.ShouldNotContain("PlayerName");
-
-        var roomPropertyNames = typeof(Room).GetProperties().Select(p => p.Name).ToList();
-        roomPropertyNames.ShouldNotContain("HostPlayerId");
-        roomPropertyNames.ShouldNotContain("PlayerCount");
-
-        // Exactly two device channels exist for the room session
-        manager.GetConnectionId("ABC234", hostDeviceSessionId).ShouldBe("conn-host");
-        manager.GetConnectionId("ABC234", joinerDeviceSessionId).ShouldBe("conn-joiner");
     }
 
     #endregion

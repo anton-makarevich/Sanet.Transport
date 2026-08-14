@@ -46,6 +46,8 @@ public class RelayHubTests
         var logger = new CapturingLogger<RelayHub>();
         var rateLimiter = Substitute.For<IRelayRateLimiter>();
         var roomManager = Substitute.For<IRoomManager>();
+        roomManager.RegisterConnection(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<string>())
+            .Returns((string?)null);
         roomManager.GetHostConnectionId(Arg.Any<string>()).Returns((string?)null);
         var hub = CreateHub(logger, rateLimiter, roomManager);
         var groups = Substitute.For<IGroupManager>();
@@ -60,6 +62,35 @@ public class RelayHubTests
 
         logger.GetMessages(LogLevel.Warning).ShouldContain(
             message => message.Contains("found no host connection", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task OnConnectedAsync_ReplacedConnection_NotifiesSupersededConnectionWithError()
+    {
+        var roomManager = Substitute.For<IRoomManager>();
+        roomManager.RegisterConnection(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<string>())
+            .Returns("old-conn");
+        var hub = CreateHub(roomManager: roomManager);
+        var groups = Substitute.For<IGroupManager>();
+        groups.AddToGroupAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.CompletedTask);
+        groups.RemoveFromGroupAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.CompletedTask);
+        hub.Groups = groups;
+
+        var supersededClients = Substitute.For<IRelayHub>();
+        var clients = Substitute.For<IHubCallerClients<IRelayHub>>();
+        clients.Client("old-conn").Returns(supersededClients);
+        hub.Clients = clients;
+
+        var session = new RoomSession(
+            "tok", "ROOM1", Guid.NewGuid(), RoomRole.Client, DateTimeOffset.UtcNow.AddHours(1));
+        hub.Context = ContextForSession(session);
+
+        await hub.OnConnectedAsync();
+
+        await supersededClients.Received(1).OnError(Arg.Is<HubError>(
+            error => error.Code == HubErrorCode.ConnectionSuperseded
+                     && error.RoomCode == session.RoomCode));
+        await groups.Received(1).RemoveFromGroupAsync("old-conn", "ROOM1");
     }
 
     [Fact]

@@ -6,7 +6,9 @@ using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Sanet.Transport.SignalR.Hub.Security;
+using Sanet.Transport.SignalR.Hub.Tests.TestLoggers;
 
 namespace Sanet.Transport.SignalR.Hub.Tests;
 
@@ -24,6 +26,8 @@ public sealed class HubApplicationFactory : WebApplicationFactory<global::Progra
     private readonly int _signalRKeepAliveIntervalSeconds;
     private readonly int _signalRClientTimeoutIntervalSeconds;
     private readonly TimeProvider? _timeProvider;
+    private readonly CapturingLogger<ApiKeyAuthenticationMiddleware>? _apiKeyAuthenticationLogger;
+    private readonly CapturingLogger<RelayAuthenticationMiddleware>? _relayAuthenticationLogger;
 
     public HubApplicationFactory(
         int maxConcurrentRooms = 10,
@@ -33,9 +37,11 @@ public sealed class HubApplicationFactory : WebApplicationFactory<global::Progra
         int roomTtlSeconds = 7200,
         int dissolutionGracePeriodSeconds = 30,
         int peerDisconnectNotificationDelaySeconds = 5,
-        int signalRKeepAliveIntervalSeconds = 15,
-        int signalRClientTimeoutIntervalSeconds = 30,
-        TimeProvider? timeProvider = null)
+        int signalRKeepAliveIntervalSeconds = 86400,
+        int signalRClientTimeoutIntervalSeconds = 172800,
+        TimeProvider? timeProvider = null,
+        CapturingLogger<ApiKeyAuthenticationMiddleware>? apiKeyAuthenticationLogger = null,
+        CapturingLogger<RelayAuthenticationMiddleware>? relayAuthenticationLogger = null)
     {
         _maxConcurrentRooms = maxConcurrentRooms;
         _joinRateLimitPerMinute = joinRateLimitPerMinute;
@@ -47,6 +53,8 @@ public sealed class HubApplicationFactory : WebApplicationFactory<global::Progra
         _signalRKeepAliveIntervalSeconds = signalRKeepAliveIntervalSeconds;
         _signalRClientTimeoutIntervalSeconds = signalRClientTimeoutIntervalSeconds;
         _timeProvider = timeProvider;
+        _apiKeyAuthenticationLogger = apiKeyAuthenticationLogger;
+        _relayAuthenticationLogger = relayAuthenticationLogger;
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -71,10 +79,10 @@ public sealed class HubApplicationFactory : WebApplicationFactory<global::Progra
 
         builder.ConfigureTestServices(services =>
         {
-            services.PostConfigure<HubOptions>(options =>
+            services.PostConfigure<Microsoft.AspNetCore.SignalR.HubOptions>(options =>
             {
-                options.KeepAliveInterval = TimeSpan.FromDays(1);
-                options.ClientTimeoutInterval = TimeSpan.FromDays(2);
+                options.KeepAliveInterval = TimeSpan.FromSeconds(_signalRKeepAliveIntervalSeconds);
+                options.ClientTimeoutInterval = TimeSpan.FromSeconds(_signalRClientTimeoutIntervalSeconds);
             });
 
             if (_timeProvider is not null)
@@ -86,6 +94,16 @@ public sealed class HubApplicationFactory : WebApplicationFactory<global::Progra
                 }
 
                 services.AddSingleton(_timeProvider);
+            }
+
+            if (_apiKeyAuthenticationLogger is not null)
+            {
+                services.AddSingleton<ILogger<ApiKeyAuthenticationMiddleware>>(_apiKeyAuthenticationLogger);
+            }
+
+            if (_relayAuthenticationLogger is not null)
+            {
+                services.AddSingleton<ILogger<RelayAuthenticationMiddleware>>(_relayAuthenticationLogger);
             }
         });
     }

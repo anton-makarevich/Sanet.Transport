@@ -3,10 +3,12 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Sanet.Transport.SignalR.Hub.Configuration;
 using Sanet.Transport.SignalR.Hub.Contracts;
 using Sanet.Transport.SignalR.Hub.Security;
+using Sanet.Transport.SignalR.Hub.Tests.TestLoggers;
 using Shouldly;
 
 namespace Sanet.Transport.SignalR.Hub.Tests;
@@ -286,32 +288,40 @@ public class HubConfigurationTests
     [Fact]
     public async Task ApiKeyAuthenticationMiddleware_DoesNotLogApiKey()
     {
-        await using var factory = new HubApplicationFactory();
+        var logger = new CapturingLogger<ApiKeyAuthenticationMiddleware>();
+        await using var factory = new HubApplicationFactory(apiKeyAuthenticationLogger: logger);
         using var client = factory.CreateClient();
 
-        // Send request without API key to trigger 401
+        const string suppliedApiKey = "distinctive-wrong-api-key";
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/rooms");
         request.Content = JsonContent.Create(new CreateRoomRequest(Guid.NewGuid()));
+        request.Headers.Add(ApiKeyAuthenticationDefaults.HeaderName, suppliedApiKey);
 
         using var response = await client.SendAsync(request);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
         var body = await response.Content.ReadAsStringAsync();
         body.ShouldNotContain(HubApplicationFactory.ApiKey);
-        body.ShouldNotContain("configured");
+        body.ShouldNotContain(suppliedApiKey);
+
+        logger.GetMessages(LogLevel.Warning).ShouldContain(
+            message => message.Contains("API key missing or invalid", StringComparison.Ordinal));
+        logger.GetMessages(LogLevel.Warning).ShouldNotContain(
+            message => message.Contains(suppliedApiKey, StringComparison.Ordinal));
     }
 
     [Fact]
     public async Task RelayAuthenticationMiddleware_DoesNotLogApiKeyOrSessionToken()
     {
-        await using var factory = new HubApplicationFactory();
+        var logger = new CapturingLogger<RelayAuthenticationMiddleware>();
+        await using var factory = new HubApplicationFactory(relayAuthenticationLogger: logger);
         using var client = factory.CreateClient();
 
-        // Attempt to connect to relay hub without valid session
+        const string suppliedSessionToken = "distinctive-invalid-session-token";
         var url = HubApplicationFactory.BuildRelayHubUrl(
             client.BaseAddress!.ToString(),
-            "invalid-key",
-            "invalid-session");
+            HubApplicationFactory.ApiKey,
+            suppliedSessionToken);
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
 
         using var response = await client.SendAsync(request);
@@ -319,6 +329,12 @@ public class HubConfigurationTests
         response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
         var body = await response.Content.ReadAsStringAsync();
         body.ShouldNotContain(HubApplicationFactory.ApiKey);
+        body.ShouldNotContain(suppliedSessionToken);
+
+        logger.GetMessages(LogLevel.Warning).ShouldContain(
+            message => message.Contains("session token not recognized", StringComparison.Ordinal));
+        logger.GetMessages(LogLevel.Warning).ShouldNotContain(
+            message => message.Contains(suppliedSessionToken, StringComparison.Ordinal));
     }
     
     private static async Task<HttpResponseMessage> CreateRoomAsync(

@@ -8,7 +8,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Copy SDK pinning and shared build props so they are honored inside the container
-COPY ["global.json", "Directory.Build.props", "."]
+COPY ["global.json", "Directory.Build.props", "./"]
 COPY ["src/Sanet.Transport.SignalR.Hub/Sanet.Transport.SignalR.Hub.csproj", "Sanet.Transport.SignalR.Hub/"]
 RUN dotnet restore "Sanet.Transport.SignalR.Hub/Sanet.Transport.SignalR.Hub.csproj"
 

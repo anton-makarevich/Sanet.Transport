@@ -1,5 +1,4 @@
 using Sanet.Transport.SignalR.Client.Relay;
-using HubError = Sanet.Transport.SignalR.Hub.Contracts.HubError;
 
 namespace Sanet.Transport.SignalR.Hub.Relay;
 

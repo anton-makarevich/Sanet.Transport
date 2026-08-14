@@ -11,8 +11,8 @@ using Sanet.Transport.SignalR.Hub.Contracts;
 using Sanet.Transport.SignalR.Hub.Relay;
 using Sanet.Transport.SignalR.Hub.Security;
 using Shouldly;
-using HubError = Sanet.Transport.SignalR.Hub.Contracts.HubError;
-using HubErrorCode = Sanet.Transport.SignalR.Hub.Contracts.HubErrorCode;
+using HubError = Sanet.Transport.SignalR.Client.Relay.HubError;
+using HubErrorCode = Sanet.Transport.SignalR.Client.Relay.HubErrorCode;
 
 namespace Sanet.Transport.SignalR.Hub.Tests.Relay;
 
@@ -181,7 +181,7 @@ public class RelayLifecycleTests
 
         var received = await error.Task.WaitAsync(TimeSpan.FromSeconds(5));
         received.Code.ShouldBe(HubErrorCode.HostDisconnected);
-        received.DeviceSessionId.ShouldBe(room.HostDeviceSessionId);
+        received.RoomCode.ShouldBe(room.RoomCode);
     }
 
     [Fact]
