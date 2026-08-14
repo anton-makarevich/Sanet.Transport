@@ -3,6 +3,7 @@
 A lightweight transport layer for message passing between distributed systems.
 
 [![Build Status](https://github.com/anton-makarevich/Sanet.Transport/actions/workflows/transport.yml/badge.svg)](https://github.com/anton-makarevich/Sanet.Transport/actions/workflows/transport.yml)
+[![Hub Build Status](https://github.com/anton-makarevich/Sanet.Transport/actions/workflows/hub.yml/badge.svg)](https://github.com/anton-makarevich/Sanet.Transport/actions/workflows/hub.yml)
 [![codecov](https://codecov.io/gh/anton-makarevich/Sanet.Transport/branch/main/graph/badge.svg)](https://codecov.io/gh/anton-makarevich/Sanet.Transport)
 
 | Package                        | Version                                                                                                                                |
@@ -47,6 +48,12 @@ dotnet add package Sanet.Transport.Channel
 dotnet add package Sanet.Transport.SignalR.Client
 dotnet add package Sanet.Transport.SignalR.Server
 ```
+
+## Relay Hub Server
+
+`Sanet.Transport.SignalR.Hub` is a self-hosted cloud relay service that backs `RelayClientPublisher`. It hosts a SignalR hub for real-time message relay and a REST API for room lifecycle management (create, join, ready, close, kick). It is not a NuGet package — run it directly or via Docker.
+
+- See [`src/Sanet.Transport.SignalR.Hub/README.md`](src/Sanet.Transport.SignalR.Hub/README.md) for configuration, local run, and Docker instructions.
 
 ## SignalR Client Publishers
 
@@ -104,6 +111,7 @@ await publisher.PublishMessage(new TransportMessage
 - **Sanet.Transport.Channel**: Implementation using System.Threading.Channels
 - **Sanet.Transport.SignalR.Client**: Client-side SignalR publishers (`SignalRClientPublisher`, `RelayClientPublisher`) and UDP discovery
 - **Sanet.Transport.SignalR.Server**: Server-side embedded host (`SignalRHostManager`) and server publisher
+- **Sanet.Transport.SignalR.Hub**: Cloud relay room-management web service (SignalR hub + REST API)
 
 ## License
 
