@@ -73,13 +73,35 @@ The container listens on `http://localhost:8080` in `Production` mode.
 | POST | `/api/rooms/{roomCode}/ready` | Mark a room ready to accept joiners (requires `X-Api-Key` + `Session-Token` header, host only) |
 | POST | `/api/rooms/{roomCode}/close` | Close a room (requires `X-Api-Key` + `Session-Token` header, host only) |
 | DELETE | `/api/rooms/{roomCode}/members/{playerId}` | Remove a member (requires `X-Api-Key` + `Session-Token` header, host only) |
-| WebSocket | `/hubs/relay` | SignalR hub for message relay (requires `apiKey` and `sessionToken` query parameters) |
+| WebSocket | `/hubs/relay` | SignalR hub for message relay (requires `sessionToken` query parameter) |
 
 ## Connecting Clients
 
-Once the Hub is running and the API key is set, any client built on `Sanet.Transport.SignalR.Client` can join a room. Connect the relay publisher to the hub URL, e.g.:
+The API key (`X-Api-Key` header) is used **only** by the `/api/*` REST endpoints. The `/hubs/relay` WebSocket endpoint does not accept the API key; it requires a per-session `sessionToken` query parameter instead.
+
+The session token is handed off by the REST API: `POST /api/rooms` (host) or `POST /api/rooms/{roomCode}/join` (joining client) returns a `SessionToken` that the client then passes to the relay publisher alongside the hub base URL, e.g.:
+
+```csharp
+using Microsoft.Extensions.Logging;
+
+string relayBaseUrl = Environment.GetEnvironmentVariable("RELAY_BASE_URL") ?? "http://localhost:5000";
+string roomCode = "ABC234";
+string sessionToken = "session-token-from-create-or-join-response";
+
+using var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+
+await using var publisher = new RelayClientPublisher(
+    hubUrl: $"{relayBaseUrl}/hubs/relay",
+    roomCode: roomCode,
+    sessionToken: sessionToken,
+    logger: loggerFactory.CreateLogger<RelayClientPublisher>());
+
+await publisher.StartAsync();
+```
+
+Point `RELAY_BASE_URL` at the Hub's address:
 
 ```bash
-$env:RELAY_API_KEY = "dev-key"
-$env:RELAY_BASE_URL = "http://localhost:5000"
+$env:RELAY_BASE_URL = "http://localhost:5000"   # PowerShell
+export RELAY_BASE_URL="http://localhost:5000"  # bash
 ```

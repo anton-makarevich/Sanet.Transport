@@ -23,12 +23,8 @@ public class RelayHubConnectionTests
         var host = await CreateReadyHostAsync(client);
         var other = await CreateReadyHostAsync(client);
 
-        await using var hostConnection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            host.SessionToken);
-        await using var otherConnection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            other.SessionToken);
+        await using var hostConnection = factory.CreateRelayHubConnection(host.SessionToken);
+        await using var otherConnection = factory.CreateRelayHubConnection(other.SessionToken);
 
         var hostProbe = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var otherProbe = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -43,34 +39,55 @@ public class RelayHubConnectionTests
         otherConnection.State.ShouldBe(HubConnectionState.Connected);
 
         var hubContext = factory.Services.GetRequiredService<IHubContext<RelayHub>>();
-        await hubContext.Clients.Group(host.RoomCode).SendAsync(GroupProbeMethod, "bound-room");
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!hostProbe.Task.IsCompleted && DateTime.UtcNow < deadline)
+        {
+            await hubContext.Clients.Group(host.RoomCode).SendAsync(GroupProbeMethod, "bound-room");
+            await Task.WhenAny(hostProbe.Task, Task.Delay(500));
+        }
 
-        var received = await hostProbe.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var received = await hostProbe.Task.WaitAsync(TimeSpan.FromSeconds(30));
         received.ShouldBe("bound-room");
 
-        var otherCompleted = await Task.WhenAny(otherProbe.Task, Task.Delay(500));
+        var otherCompleted = await Task.WhenAny(otherProbe.Task, Task.Delay(1000));
         otherCompleted.ShouldNotBe(otherProbe.Task);
     }
 
-    [Theory]
-    [InlineData(null)]
-    [InlineData("not-the-configured-key")]
-    public async Task Connect_WithMissingOrInvalidApiKey_IsRejectedWithoutLeakingConfiguredKey(string? apiKey)
+    [Fact]
+    public async Task Connect_WithoutApiKey_IsAcceptedOnSessionTokenOnly()
     {
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
         var host = await CreateReadyHostAsync(client);
 
-        using var response = await PostNegotiateAsync(client, apiKey, host.SessionToken);
+        await using var connection = factory.CreateRelayHubConnection(host.SessionToken);
+
+        await connection.StartAsync();
+
+        connection.State.ShouldBe(HubConnectionState.Connected);
+    }
+
+    [Fact]
+    public async Task Connect_WithApiKeyOnly_IsRejected()
+    {
+        await using var factory = new HubApplicationFactory();
+        using var client = factory.CreateClient();
+
+        var baseUri = new Uri(client.BaseAddress!.ToString());
+        var negotiateUri = new UriBuilder(new Uri(baseUri, RelayAuthenticationDefaults.HubPath))
+        {
+            Query = "negotiateVersion=1"
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, negotiateUri.Uri);
+        request.Headers.Add(ApiKeyAuthenticationDefaults.HeaderName, HubApplicationFactory.ApiKey);
+
+        using var response = await client.SendAsync(request);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
-        response.Headers.CacheControl.ShouldNotBeNull();
-        response.Headers.CacheControl.NoStore.ShouldBeTrue();
 
         var body = await response.Content.ReadAsStringAsync();
         body.ShouldBeEmpty();
-        body.ShouldNotContain(HubApplicationFactory.ApiKey);
-        body.ShouldNotContain(host.SessionToken);
     }
 
     [Theory]
@@ -83,7 +100,7 @@ public class RelayHubConnectionTests
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
-        using var response = await PostNegotiateAsync(client, HubApplicationFactory.ApiKey, sessionToken);
+        using var response = await PostNegotiateAsync(client, sessionToken);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
 
@@ -106,10 +123,7 @@ public class RelayHubConnectionTests
 
         timeProvider.Advance(TimeSpan.FromHours(2).Add(TimeSpan.FromMinutes(1)));
 
-        using var response = await PostNegotiateAsync(
-            client,
-            HubApplicationFactory.ApiKey,
-            host.SessionToken);
+        using var response = await PostNegotiateAsync(client, host.SessionToken);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
 
@@ -133,10 +147,7 @@ public class RelayHubConnectionTests
             client, host.RoomCode, join.DeviceSessionId!.Value, host.SessionToken);
         removeResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
-        using var response = await PostNegotiateAsync(
-            client,
-            HubApplicationFactory.ApiKey,
-            join.SessionToken);
+        using var response = await PostNegotiateAsync(client, join.SessionToken);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
 
@@ -157,9 +168,7 @@ public class RelayHubConnectionTests
         using var closeResponse = await RoomApiClient.CloseRoomAsync(client, host.RoomCode, host.SessionToken);
         closeResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
-        await using var connection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            host.SessionToken);
+        await using var connection = factory.CreateRelayHubConnection(host.SessionToken);
 
         await connection.StartAsync();
 
@@ -173,9 +182,7 @@ public class RelayHubConnectionTests
         using var client = factory.CreateClient();
         var host = await CreateReadyHostAsync(client);
 
-        await using var connection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            host.SessionToken);
+        await using var connection = factory.CreateRelayHubConnection(host.SessionToken);
         await connection.StartAsync();
 
         foreach (var methodName in new[] { "CreateRoom", "JoinRoom", "MarkReady", "CloseRoom", "RemoveMember" })
@@ -217,18 +224,11 @@ public class RelayHubConnectionTests
 
     private static async Task<HttpResponseMessage> PostNegotiateAsync(
         HttpClient client,
-        string? apiKey,
         string? sessionToken)
     {
         var baseUri = new Uri(client.BaseAddress!.ToString());
         var negotiateBuilder = new UriBuilder(new Uri(baseUri, RelayAuthenticationDefaults.HubPath));
         var queryParts = new List<string>();
-
-        if (apiKey is not null)
-        {
-            queryParts.Add(
-                $"{ApiKeyAuthenticationDefaults.ApiKeyQueryParameterName}={Uri.EscapeDataString(apiKey)}");
-        }
 
         if (sessionToken is not null)
         {

@@ -63,6 +63,7 @@ if (discoveredUrls.Count > 0)
 Used for cross-network/internet play without port forwarding. Connects outbound over WebSockets to a `RelayHub` using a room code and a session token issued by the room management REST API.
 
 ```csharp
+using Microsoft.Extensions.Logging;
 using Sanet.Transport;
 using Sanet.Transport.SignalR.Client.Publishers;
 using Sanet.Transport.SignalR.Client.Relay;
@@ -72,11 +73,10 @@ string hubUrl = "wss://relay.example.com/relayhub";
 string roomCode = "ABC234";
 string sessionToken = "session-token-from-rest-api";
 
-// Optional API key; required when the relay hub enforces relay authentication
-// (RelayAuthenticationMiddleware). Hubs that don't require an api key can omit it.
-string? apiKey = "api-key-from-relay-api";
+using var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
 
-await using var publisher = new RelayClientPublisher(hubUrl, roomCode, sessionToken, apiKey: apiKey);
+await using var publisher = new RelayClientPublisher(
+    hubUrl, roomCode, sessionToken, loggerFactory.CreateLogger<RelayClientPublisher>());
 
 // Optional: Listen for hub events
 publisher.PeerConnected += peerId => Console.WriteLine($"Peer connected: {peerId}");

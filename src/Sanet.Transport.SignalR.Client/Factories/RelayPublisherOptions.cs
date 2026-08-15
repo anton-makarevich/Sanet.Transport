@@ -20,10 +20,4 @@ public sealed record RelayPublisherOptions : PublisherOptions
     /// The session token issued by the REST room join/create API.
     /// </summary>
     public required string SessionToken { get; init; }
-
-    /// <summary>
-    /// Optional API key appended as a query parameter. Required by hubs
-    /// that enforce relay authentication (RelayAuthenticationMiddleware).
-    /// </summary>
-    public string? ApiKey { get; init; }
 }

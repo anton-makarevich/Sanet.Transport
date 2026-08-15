@@ -1,40 +1,25 @@
-using System.Security.Cryptography;
-using System.Text;
-using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Primitives;
-using Sanet.Transport.SignalR.Hub.Configuration;
+using Microsoft.AspNetCore.Http;
 using Sanet.Transport.SignalR.Hub.Rooms;
 
 namespace Sanet.Transport.SignalR.Hub.Security;
 
 /// <summary>
-/// Validates query-string API key and session token for the SignalR relay hub path
-/// before the WebSocket upgrade completes. Never logs credentials; only the rejection
-/// reason and (for successful auth) the non-secret session identity.
+/// Validates the query-string session token for the SignalR relay hub path before the
+/// WebSocket upgrade completes. Never logs credentials; only the rejection reason and
+/// (for successful auth) the non-secret session identity. After successful authentication
+/// the session token is removed from the request query string so it never reaches
+/// downstream URL logging, tracing, or exception telemetry.
 /// </summary>
 public sealed class RelayAuthenticationMiddleware(RequestDelegate next)
 {
     public async Task InvokeAsync(
         HttpContext context,
-        IOptions<HubOptions> options,
         IRoomManager roomManager,
         ILogger<RelayAuthenticationMiddleware> logger)
     {
         if (!context.Request.Path.StartsWithSegments(RelayAuthenticationDefaults.HubPath))
         {
             await next(context);
-            return;
-        }
-
-        var configuredApiKey = options.Value.ApiKey;
-        var suppliedApiKey = context.Request.Query[ApiKeyAuthenticationDefaults.ApiKeyQueryParameterName];
-
-        if (string.IsNullOrWhiteSpace(configuredApiKey) || !IsMatch(configuredApiKey, suppliedApiKey))
-        {
-            logger.LogWarning(
-                "Relay hub connection from {RemoteIp} rejected: API key missing or invalid",
-                context.Connection.RemoteIpAddress);
-            RejectUnauthorized(context);
             return;
         }
 
@@ -68,25 +53,21 @@ public sealed class RelayAuthenticationMiddleware(RequestDelegate next)
             session.Role);
 
         context.Items[RelayAuthenticationDefaults.AuthenticatedSessionItemKey] = session;
+        RemoveSessionTokenFromQueryString(context);
         await next(context);
+    }
+
+    private static void RemoveSessionTokenFromQueryString(HttpContext context)
+    {
+        context.Request.QueryString = QueryString.Create(
+            context.Request.Query.Where(pair => !pair.Key.Equals(
+                ApiKeyAuthenticationDefaults.SessionTokenQueryParameterName,
+                StringComparison.OrdinalIgnoreCase)));
     }
 
     private static void RejectUnauthorized(HttpContext context)
     {
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
         context.Response.Headers.CacheControl = "no-store";
-    }
-
-    private static bool IsMatch(string expectedApiKey, StringValues suppliedApiKey)
-    {
-        if (suppliedApiKey.Count != 1 || string.IsNullOrEmpty(suppliedApiKey[0]))
-        {
-            return false;
-        }
-
-        var expectedBytes = Encoding.UTF8.GetBytes(expectedApiKey);
-        var suppliedBytes = Encoding.UTF8.GetBytes(suppliedApiKey[0]!);
-
-        return CryptographicOperations.FixedTimeEquals(expectedBytes, suppliedBytes);
     }
 }

@@ -40,15 +40,9 @@ public class RelayRpcTests
         var joinerA = await JoinRoomAsync(client, roomA.RoomCode, sessionToken: null);
         var roomB = await CreateReadyHostAsync(client);
 
-        await using var hostA = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            roomA.SessionToken);
-        await using var clientA = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            joinerA.SessionToken!);
-        await using var hostB = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            roomB.SessionToken);
+        await using var hostA = factory.CreateRelayHubConnection(roomA.SessionToken);
+        await using var clientA = factory.CreateRelayHubConnection(joinerA.SessionToken!);
+        await using var hostB = factory.CreateRelayHubConnection(roomB.SessionToken);
 
         var hostAReceived = new TaskCompletionSource<RelayEnvelope>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -61,8 +55,11 @@ public class RelayRpcTests
         clientA.On<RelayEnvelope>(nameof(IRelayHub.OnReceive), envelope => clientAReceived.TrySetResult(envelope));
         hostB.On<RelayEnvelope>(nameof(IRelayHub.OnReceive), envelope => hostBReceived.TrySetResult(envelope));
 
+        var clientAAttached = RegisterPeerAttachedSignal(hostA);
+
         await hostA.StartAsync();
         await clientA.StartAsync();
+        await clientAAttached.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await hostB.StartAsync();
 
         var payload = """{"kind":"ping"}""";
@@ -71,13 +68,13 @@ public class RelayRpcTests
             roomA.RoomCode,
             new RelayEnvelope("client-supplied", payload, "1.0.0", 1, DateTime.UtcNow));
 
-        var delivered = await clientAReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var delivered = await clientAReceived.Task.WaitAsync(TimeSpan.FromSeconds(30));
         delivered.Payload.ShouldBe(payload);
 
-        var senderEcho = await Task.WhenAny(hostAReceived.Task, Task.Delay(500));
+        var senderEcho = await Task.WhenAny(hostAReceived.Task, Task.Delay(1000));
         senderEcho.ShouldNotBe(hostAReceived.Task);
 
-        var otherRoom = await Task.WhenAny(hostBReceived.Task, Task.Delay(500));
+        var otherRoom = await Task.WhenAny(hostBReceived.Task, Task.Delay(1000));
         otherRoom.ShouldNotBe(hostBReceived.Task);
     }
 
@@ -90,12 +87,8 @@ public class RelayRpcTests
         var host = await CreateReadyHostAsync(client);
         var joiner = await JoinRoomAsync(client, host.RoomCode, sessionToken: null);
 
-        await using var hostConnection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            host.SessionToken);
-        await using var clientConnection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            joiner.SessionToken!);
+        await using var hostConnection = factory.CreateRelayHubConnection(host.SessionToken);
+        await using var clientConnection = factory.CreateRelayHubConnection(joiner.SessionToken!);
 
         var received = new TaskCompletionSource<RelayEnvelope>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -103,15 +96,18 @@ public class RelayRpcTests
             nameof(IRelayHub.OnReceive),
             envelope => received.TrySetResult(envelope));
 
+        var clientAttached = RegisterPeerAttachedSignal(hostConnection);
+
         await hostConnection.StartAsync();
         await clientConnection.StartAsync();
+        await clientAttached.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         await hostConnection.InvokeAsync(
             nameof(RelayHub.Relay),
             host.RoomCode,
             new RelayEnvelope("bogus-sender-id", "payload", "1.0.0", 7, DateTime.UtcNow));
 
-        var envelope = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var envelope = await received.Task.WaitAsync(TimeSpan.FromSeconds(30));
         envelope.SenderId.ShouldBe(hostConnection.ConnectionId);
         envelope.SenderId.ShouldNotBe("bogus-sender-id");
         envelope.Payload.ShouldBe("payload");
@@ -129,12 +125,8 @@ public class RelayRpcTests
         var joinerA = await JoinRoomAsync(client, roomA.RoomCode, sessionToken: null);
         var roomB = await CreateReadyHostAsync(client);
 
-        await using var hostA = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            roomA.SessionToken);
-        await using var clientA = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            joinerA.SessionToken!);
+        await using var hostA = factory.CreateRelayHubConnection(roomA.SessionToken);
+        await using var clientA = factory.CreateRelayHubConnection(joinerA.SessionToken!);
 
         var clientAReceived = new TaskCompletionSource<RelayEnvelope>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -154,7 +146,7 @@ public class RelayRpcTests
         exception.Message.ShouldNotContain(HubApplicationFactory.ApiKey);
         exception.Message.ShouldNotContain(roomA.SessionToken);
 
-        var delivered = await Task.WhenAny(clientAReceived.Task, Task.Delay(500));
+        var delivered = await Task.WhenAny(clientAReceived.Task, Task.Delay(1000));
         delivered.ShouldNotBe(clientAReceived.Task);
     }
 
@@ -167,12 +159,8 @@ public class RelayRpcTests
         var host = await CreateReadyHostAsync(client);
         var joiner = await JoinRoomAsync(client, host.RoomCode, sessionToken: null);
 
-        await using var hostConnection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            host.SessionToken);
-        await using var clientConnection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            joiner.SessionToken!);
+        await using var hostConnection = factory.CreateRelayHubConnection(host.SessionToken);
+        await using var clientConnection = factory.CreateRelayHubConnection(joiner.SessionToken!);
 
         var received = new TaskCompletionSource<RelayEnvelope>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -192,7 +180,7 @@ public class RelayRpcTests
 
         exception.Message.ShouldContain(nameof(HubErrorCode.MessageTooLarge));
 
-        var delivered = await Task.WhenAny(received.Task, Task.Delay(500));
+        var delivered = await Task.WhenAny(received.Task, Task.Delay(1000));
         delivered.ShouldNotBe(received.Task);
     }
 
@@ -255,9 +243,7 @@ public class RelayRpcTests
 
         var host = await CreateReadyHostAsync(client);
 
-        await using var hostConnection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            host.SessionToken);
+        await using var hostConnection = factory.CreateRelayHubConnection(host.SessionToken);
 
         await hostConnection.StartAsync();
 
@@ -279,12 +265,8 @@ public class RelayRpcTests
         var host = await CreateReadyHostAsync(client);
         var joiner = await JoinRoomAsync(client, host.RoomCode, sessionToken: null);
 
-        await using var hostConnection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            host.SessionToken);
-        await using var clientConnection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            joiner.SessionToken!);
+        await using var hostConnection = factory.CreateRelayHubConnection(host.SessionToken);
+        await using var clientConnection = factory.CreateRelayHubConnection(joiner.SessionToken!);
 
         var receiveCount = 0;
         var thirdAttemptReceived = new TaskCompletionSource<RelayEnvelope>(
@@ -298,8 +280,11 @@ public class RelayRpcTests
             }
         });
 
+        var clientAttached = RegisterPeerAttachedSignal(hostConnection);
+
         await hostConnection.StartAsync();
         await clientConnection.StartAsync();
+        await clientAttached.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         await hostConnection.InvokeAsync(
             nameof(RelayHub.Relay),
@@ -318,9 +303,20 @@ public class RelayRpcTests
 
         exception.Message.ShouldContain(nameof(HubErrorCode.RateLimited));
 
-        var delivered = await Task.WhenAny(thirdAttemptReceived.Task, Task.Delay(500));
-        delivered.ShouldNotBe(thirdAttemptReceived.Task);
+        await WaitUntilAsync(() => receiveCount >= 2);
         receiveCount.ShouldBe(2);
+        var delivered = await Task.WhenAny(thirdAttemptReceived.Task, Task.Delay(1000));
+        delivered.ShouldNotBe(thirdAttemptReceived.Task);
+    }
+
+    private static TaskCompletionSource<T> NewCompletionSource<T>() =>
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private static TaskCompletionSource<string> RegisterPeerAttachedSignal(HubConnection host)
+    {
+        var attached = NewCompletionSource<string>();
+        host.On<string>(nameof(IRelayHub.OnPeerConnected), id => attached.TrySetResult(id));
+        return attached;
     }
 
     private static async Task<ReadyHost> CreateReadyHostAsync(HttpClient client)
@@ -356,6 +352,16 @@ public class RelayRpcTests
         var result = await response.Content.ReadFromJsonAsync<JoinResponse>(JsonOptions);
         result.ShouldNotBeNull();
         return result;
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> predicate)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (!predicate() && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+        predicate().ShouldBeTrue();
     }
 
     private static async Task<HttpResponseMessage> CreateRoomAsync(

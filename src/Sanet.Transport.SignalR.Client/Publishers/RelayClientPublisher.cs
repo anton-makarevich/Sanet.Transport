@@ -75,14 +75,11 @@ public class RelayClientPublisher : ITransportPublisher
     /// <param name="roomCode">The 6-character room code.</param>
     /// <param name="sessionToken">The session token issued by the REST room join/create API.</param>
     /// <param name="logger">Logger</param>
-    /// <param name="apiKey">Optional API key appended as a query parameter. Required by hubs
-    /// that enforce relay authentication (RelayAuthenticationMiddleware).</param>
     public RelayClientPublisher(
         string hubUrl,
         string roomCode,
         string sessionToken,
-        ILogger<RelayClientPublisher> logger,
-        string? apiKey = null)
+        ILogger<RelayClientPublisher> logger)
     {
         _logger = logger;
         _syncContext = SynchronizationContext.Current;
@@ -105,7 +102,7 @@ public class RelayClientPublisher : ITransportPublisher
         _roomCode = roomCode;
 
         _hubConnection = new HubConnectionBuilder()
-            .WithUrl(BuildConnectionUrl(hubUrl, sessionToken, apiKey), options =>
+            .WithUrl(BuildConnectionUrl(hubUrl, sessionToken), options =>
             {
                 options.Transports = HttpTransportType.WebSockets;
                 options.SkipNegotiation = true;
@@ -124,21 +121,15 @@ public class RelayClientPublisher : ITransportPublisher
     }
 
     /// <summary>
-    /// Builds the SignalR hub connection URL, appending the session token (required) and,
-    /// when provided, the api key as query-string parameters.
+    /// Builds the SignalR hub connection URL, appending the session token as a query-string
+    /// parameter and replacing any sessionToken parameter already present in the hub URL.
     /// </summary>
     /// <param name="hubUrl">The base URL of the SignalR relay hub.</param>
     /// <param name="sessionToken">The session token issued by the REST room join/create API.</param>
-    /// <param name="apiKey">Optional API key required by hubs with relay authentication enabled.</param>
-    internal static string BuildConnectionUrl(string hubUrl, string sessionToken, string? apiKey)
+    internal static string BuildConnectionUrl(string hubUrl, string sessionToken)
     {
         var uriBuilder = new UriBuilder(hubUrl);
         var queryToAppend = $"sessionToken={Uri.EscapeDataString(sessionToken)}";
-
-        if (!string.IsNullOrWhiteSpace(apiKey))
-        {
-            queryToAppend += $"&apiKey={Uri.EscapeDataString(apiKey)}";
-        }
 
         if (string.IsNullOrEmpty(uriBuilder.Query) || uriBuilder.Query == "?")
         {
@@ -146,7 +137,13 @@ public class RelayClientPublisher : ITransportPublisher
         }
         else
         {
-            uriBuilder.Query = uriBuilder.Query.TrimStart('?') + "&" + queryToAppend;
+            var existingQueryParameters = uriBuilder.Query.TrimStart('?')
+                .Split('&', StringSplitOptions.RemoveEmptyEntries)
+                .Where(pair => !pair
+                    .Split('=', 2)[0]
+                    .Equals("sessionToken", StringComparison.OrdinalIgnoreCase));
+
+            uriBuilder.Query = string.Join('&', existingQueryParameters.Append(queryToAppend));
         }
 
         return uriBuilder.Uri.AbsoluteUri;

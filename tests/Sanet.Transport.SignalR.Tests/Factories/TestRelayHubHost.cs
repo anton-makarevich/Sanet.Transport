@@ -8,8 +8,8 @@ namespace Sanet.Transport.SignalR.Tests.Factories;
 
 /// <summary>
 /// Hub that stands in for the remote relay hub while exercising the real
-/// SignalR WebSocket handshake, rejecting connections whose apiKey query
-/// parameter does not match the configured key.
+/// SignalR WebSocket handshake, rejecting connections whose sessionToken query
+/// parameter does not match the configured token.
 /// </summary>
 public sealed class TestRelayHub : Hub
 {
@@ -17,7 +17,7 @@ public sealed class TestRelayHub : Hub
 
 internal static class TestRelayHubHost
 {
-    public static async Task<WebApplication> StartAsync(string requiredApiKey)
+    public static async Task<WebApplication> StartAsync(string requiredSessionToken)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
@@ -26,7 +26,7 @@ internal static class TestRelayHubHost
         app.UseWebSockets();
         app.Use(async (context, next) =>
         {
-            if (context.Request.Query["apiKey"].ToString() != requiredApiKey)
+            if (context.Request.Query["sessionToken"].ToString() != requiredSessionToken)
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return;
