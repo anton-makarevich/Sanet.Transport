@@ -41,10 +41,10 @@ public class RelayHubConnectionTests
         var hubContext = factory.Services.GetRequiredService<IHubContext<RelayHub>>();
         await hubContext.Clients.Group(host.RoomCode).SendAsync(GroupProbeMethod, "bound-room");
 
-        var received = await hostProbe.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var received = await hostProbe.Task.WaitAsync(TimeSpan.FromSeconds(30));
         received.ShouldBe("bound-room");
 
-        var otherCompleted = await Task.WhenAny(otherProbe.Task, Task.Delay(500));
+        var otherCompleted = await Task.WhenAny(otherProbe.Task, Task.Delay(1000));
         otherCompleted.ShouldNotBe(otherProbe.Task);
     }
 

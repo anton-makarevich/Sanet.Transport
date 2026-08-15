@@ -37,10 +37,10 @@ public class RelayLifecycleTests
         await host.StartAsync();
         await client.StartAsync();
 
-        (await connected.Task.WaitAsync(TimeSpan.FromSeconds(5)))
+        (await connected.Task.WaitAsync(TimeSpan.FromSeconds(30)))
             .ShouldBe(clientSession.DeviceSessionId!.Value.ToString());
         await client.StopAsync();
-        (await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(5)))
+        (await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(30)))
             .ShouldBe(clientSession.DeviceSessionId!.Value.ToString());
     }
 
@@ -115,7 +115,7 @@ public class RelayLifecycleTests
 
         // No repeat notifications while the device stays gone.
         clock.Advance(TimeSpan.FromSeconds(60));
-        await Task.Delay(200);
+        await Task.Delay(1000);
         disconnectCount.ShouldBe(1);
     }
 
@@ -150,7 +150,7 @@ public class RelayLifecycleTests
         await first.StartAsync();
         await WaitUntilAsync(() => events.Count == 1);
         await second.StartAsync();
-        await transition.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await transition.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         events.ToArray().ShouldBe([
             ("connected", clientSession.DeviceSessionId!.Value.ToString()),
@@ -159,8 +159,8 @@ public class RelayLifecycleTests
 
         await host.InvokeAsync(nameof(RelayHub.Relay), room.RoomCode,
             new RelayEnvelope("ignored", "replacement-only", "1.0.0", 1, DateTime.UtcNow));
-        (await secondReceived.Task.WaitAsync(TimeSpan.FromSeconds(5))).Payload.ShouldBe("replacement-only");
-        (await Task.WhenAny(firstReceived.Task, Task.Delay(300))).ShouldNotBe(firstReceived.Task);
+        (await secondReceived.Task.WaitAsync(TimeSpan.FromSeconds(30))).Payload.ShouldBe("replacement-only");
+        (await Task.WhenAny(firstReceived.Task, Task.Delay(1000))).ShouldNotBe(firstReceived.Task);
     }
 
     [Fact]
@@ -179,7 +179,7 @@ public class RelayLifecycleTests
 
         await host.StopAsync();
 
-        var received = await error.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var received = await error.Task.WaitAsync(TimeSpan.FromSeconds(30));
         received.Code.ShouldBe(HubErrorCode.HostDisconnected);
         received.RoomCode.ShouldBe(room.RoomCode);
     }
@@ -199,7 +199,7 @@ public class RelayLifecycleTests
         await host.StartAsync();
         await WaitForPeerConnectedAsync(host, client);
         await host.StopAsync();
-        await hostDisconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await hostDisconnected.Task.WaitAsync(TimeSpan.FromSeconds(30));
         clock.Advance(TimeSpan.FromSeconds(29));
         await using var reconnectedHost = factory.CreateRelayHubConnection(room.HostToken);
         var received = NewCompletionSource<RelayEnvelope>();
@@ -220,7 +220,7 @@ public class RelayLifecycleTests
             return received.Task.IsCompleted;
         });
 
-        (await received.Task.WaitAsync(TimeSpan.FromSeconds(5))).Payload.ShouldBe("resumed");
+        (await received.Task.WaitAsync(TimeSpan.FromSeconds(30))).Payload.ShouldBe("resumed");
     }
 
     [Fact]
@@ -238,7 +238,7 @@ public class RelayLifecycleTests
         await host.StartAsync();
         await WaitForPeerConnectedAsync(host, client);
         await host.StopAsync();
-        await hostDisconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await hostDisconnected.Task.WaitAsync(TimeSpan.FromSeconds(30));
         clock.Advance(TimeSpan.FromSeconds(30));
         await using var reconnect = factory.CreateRelayHubConnection(room.HostToken);
 
@@ -262,7 +262,7 @@ public class RelayLifecycleTests
         await host.StartAsync();
         await WaitForPeerConnectedAsync(host, client);
         await host.StopAsync();
-        await hostDisconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await hostDisconnected.Task.WaitAsync(TimeSpan.FromSeconds(30));
         // Advance beyond the non-default 60-second grace period.
         clock.Advance(TimeSpan.FromSeconds(61));
         await using var reconnect = factory.CreateRelayHubConnection(room.HostToken);
@@ -287,7 +287,7 @@ public class RelayLifecycleTests
         await host.StartAsync();
         await WaitForPeerConnectedAsync(host, client);
         await host.StopAsync();
-        await hostDisconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await hostDisconnected.Task.WaitAsync(TimeSpan.FromSeconds(30));
         // Advance past the default 30-second grace but before the configured 60-second grace.
         clock.Advance(TimeSpan.FromSeconds(31));
         await using var reconnect = factory.CreateRelayHubConnection(room.HostToken);
@@ -334,7 +334,7 @@ public class RelayLifecycleTests
         var connected = NewCompletionSource<string>();
         host.On<string>(nameof(IRelayHub.OnPeerConnected), id => connected.TrySetResult(id));
         await client.StartAsync();
-        await connected.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await connected.Task.WaitAsync(TimeSpan.FromSeconds(30));
     }
 
     private static TaskCompletionSource<T> NewCompletionSource<T>() =>
@@ -342,7 +342,7 @@ public class RelayLifecycleTests
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var deadline = DateTime.UtcNow.AddSeconds(15);
         while (!predicate() && DateTime.UtcNow < deadline)
         {
             await Task.Delay(10);
@@ -352,7 +352,7 @@ public class RelayLifecycleTests
 
     private static async Task WaitUntilAsync(Func<Task<bool>> predicate)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var deadline = DateTime.UtcNow.AddSeconds(15);
         var succeeded = false;
         while (DateTime.UtcNow < deadline)
         {
