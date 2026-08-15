@@ -73,13 +73,12 @@ The container listens on `http://localhost:8080` in `Production` mode.
 | POST | `/api/rooms/{roomCode}/ready` | Mark a room ready to accept joiners (requires `X-Api-Key` + `Session-Token` header, host only) |
 | POST | `/api/rooms/{roomCode}/close` | Close a room (requires `X-Api-Key` + `Session-Token` header, host only) |
 | DELETE | `/api/rooms/{roomCode}/members/{playerId}` | Remove a member (requires `X-Api-Key` + `Session-Token` header, host only) |
-| WebSocket | `/hubs/relay` | SignalR hub for message relay (requires `apiKey` and `sessionToken` query parameters) |
+| WebSocket | `/hubs/relay` | SignalR hub for message relay (requires `sessionToken` query parameter) |
 
 ## Connecting Clients
 
 Once the Hub is running and the API key is set, any client built on `Sanet.Transport.SignalR.Client` can join a room. Connect the relay publisher to the hub URL, e.g.:
 
 ```bash
-$env:RELAY_API_KEY = "dev-key"
 $env:RELAY_BASE_URL = "http://localhost:5000"
 ```

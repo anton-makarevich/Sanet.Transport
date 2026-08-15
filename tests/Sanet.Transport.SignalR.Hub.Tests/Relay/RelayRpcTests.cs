@@ -40,15 +40,9 @@ public class RelayRpcTests
         var joinerA = await JoinRoomAsync(client, roomA.RoomCode, sessionToken: null);
         var roomB = await CreateReadyHostAsync(client);
 
-        await using var hostA = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            roomA.SessionToken);
-        await using var clientA = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            joinerA.SessionToken!);
-        await using var hostB = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            roomB.SessionToken);
+        await using var hostA = factory.CreateRelayHubConnection(roomA.SessionToken);
+        await using var clientA = factory.CreateRelayHubConnection(joinerA.SessionToken!);
+        await using var hostB = factory.CreateRelayHubConnection(roomB.SessionToken);
 
         var hostAReceived = new TaskCompletionSource<RelayEnvelope>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -90,12 +84,8 @@ public class RelayRpcTests
         var host = await CreateReadyHostAsync(client);
         var joiner = await JoinRoomAsync(client, host.RoomCode, sessionToken: null);
 
-        await using var hostConnection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            host.SessionToken);
-        await using var clientConnection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            joiner.SessionToken!);
+        await using var hostConnection = factory.CreateRelayHubConnection(host.SessionToken);
+        await using var clientConnection = factory.CreateRelayHubConnection(joiner.SessionToken!);
 
         var received = new TaskCompletionSource<RelayEnvelope>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -129,12 +119,8 @@ public class RelayRpcTests
         var joinerA = await JoinRoomAsync(client, roomA.RoomCode, sessionToken: null);
         var roomB = await CreateReadyHostAsync(client);
 
-        await using var hostA = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            roomA.SessionToken);
-        await using var clientA = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            joinerA.SessionToken!);
+        await using var hostA = factory.CreateRelayHubConnection(roomA.SessionToken);
+        await using var clientA = factory.CreateRelayHubConnection(joinerA.SessionToken!);
 
         var clientAReceived = new TaskCompletionSource<RelayEnvelope>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -167,12 +153,8 @@ public class RelayRpcTests
         var host = await CreateReadyHostAsync(client);
         var joiner = await JoinRoomAsync(client, host.RoomCode, sessionToken: null);
 
-        await using var hostConnection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            host.SessionToken);
-        await using var clientConnection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            joiner.SessionToken!);
+        await using var hostConnection = factory.CreateRelayHubConnection(host.SessionToken);
+        await using var clientConnection = factory.CreateRelayHubConnection(joiner.SessionToken!);
 
         var received = new TaskCompletionSource<RelayEnvelope>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -255,9 +237,7 @@ public class RelayRpcTests
 
         var host = await CreateReadyHostAsync(client);
 
-        await using var hostConnection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            host.SessionToken);
+        await using var hostConnection = factory.CreateRelayHubConnection(host.SessionToken);
 
         await hostConnection.StartAsync();
 
@@ -279,12 +259,8 @@ public class RelayRpcTests
         var host = await CreateReadyHostAsync(client);
         var joiner = await JoinRoomAsync(client, host.RoomCode, sessionToken: null);
 
-        await using var hostConnection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            host.SessionToken);
-        await using var clientConnection = factory.CreateRelayHubConnection(
-            HubApplicationFactory.ApiKey,
-            joiner.SessionToken!);
+        await using var hostConnection = factory.CreateRelayHubConnection(host.SessionToken);
+        await using var clientConnection = factory.CreateRelayHubConnection(joiner.SessionToken!);
 
         var receiveCount = 0;
         var thirdAttemptReceived = new TaskCompletionSource<RelayEnvelope>(

@@ -90,8 +90,7 @@ using Sanet.Transport.SignalR.Client.Publishers;
 var publisher = new RelayClientPublisher(
     hubUrl: "wss://relay.example.com/relayhub",
     roomCode: "ABC234",
-    sessionToken: sessionTokenFromRestApi,
-    apiKey: apiKeyFromRelayApi); // optional; required when the hub enforces relay authentication
+    sessionToken: sessionTokenFromRestApi);
 
 publisher.Subscribe(message => Console.WriteLine($"Received: {message.MessageType}"));
 

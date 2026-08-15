@@ -13,7 +13,6 @@ public class RelayPublisherFactoryTests
 {
     private const string RoomCode = "ABCDEF";
     private const string SessionToken = "session-token";
-    private const string ApiKey = "api-key";
 
     private static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(10);
 
@@ -27,12 +26,11 @@ public class RelayPublisherFactoryTests
         _sut = new RelayPublisherFactory(_loggerFactory);
     }
 
-    private static RelayPublisherOptions Options(string hubUrl, string apiKey = ApiKey) => new()
+    private static RelayPublisherOptions Options(string hubUrl, string sessionToken = SessionToken) => new()
     {
         HubUrl = hubUrl,
         RoomCode = RoomCode,
-        SessionToken = SessionToken,
-        ApiKey = apiKey
+        SessionToken = sessionToken
     };
 
     [Fact]
@@ -92,7 +90,7 @@ public class RelayPublisherFactoryTests
     [Fact]
     public async Task CreateAsync_WhenHubReachable_ReturnsConnectedPublisher()
     {
-        await using var host = await TestRelayHubHost.StartAsync(ApiKey);
+        await using var host = await TestRelayHubHost.StartAsync(SessionToken);
         var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
 
         var publisher = await WithTimeout(_sut.Create(Options(hubUrl)));
@@ -102,35 +100,25 @@ public class RelayPublisherFactoryTests
     }
 
     [Fact]
-    public async Task CreateAsync_WhenHubRejectsWrongApiKey_Throws()
+    public async Task CreateAsync_WhenHubRejectsWrongSessionToken_Throws()
     {
-        await using var host = await TestRelayHubHost.StartAsync(ApiKey);
+        await using var host = await TestRelayHubHost.StartAsync(SessionToken);
         var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
 
         await WithTimeout(
-            Should.ThrowAsync<Exception>(() => _sut.Create(Options(hubUrl, "wrong-key"))));
-    }
-
-    [Fact]
-    public async Task CreateAsync_WhenHubRequiresApiKey_AndNoneSupplied_Throws()
-    {
-        await using var host = await TestRelayHubHost.StartAsync(ApiKey);
-        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
-
-        await WithTimeout(
-            Should.ThrowAsync<Exception>(() => _sut.Create(Options(hubUrl, string.Empty))));
+            Should.ThrowAsync<Exception>(() => _sut.Create(Options(hubUrl, "wrong-token"))));
     }
 
     [Fact]
     public async Task CreateAsync_WhenConnectionFails_DisposesPublisher()
     {
-        await using var host = await TestRelayHubHost.StartAsync(ApiKey);
+        await using var host = await TestRelayHubHost.StartAsync(SessionToken);
         var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
 
         // A failed connection must dispose the partially-created publisher and rethrow;
         // the host must remain healthy for a subsequent valid connection.
         await WithTimeout(
-            Should.ThrowAsync<Exception>(() => _sut.Create(Options(hubUrl, "wrong-key"))));
+            Should.ThrowAsync<Exception>(() => _sut.Create(Options(hubUrl, "wrong-token"))));
 
         var publisher = await WithTimeout(_sut.Create(Options(hubUrl)));
 

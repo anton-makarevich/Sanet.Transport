@@ -392,29 +392,9 @@ public class RelayClientPublisherTests
     }
 
     [Fact]
-    public void BuildConnectionUrl_WithSessionTokenOnly_AppendsSessionToken()
+    public void BuildConnectionUrl_AppendsSessionToken()
     {
-        var url = RelayClientPublisher.BuildConnectionUrl(ValidHubUrl, ValidSessionToken, null);
-
-        url.ShouldBe($"http://localhost:5000/relayhub?sessionToken={Uri.EscapeDataString(ValidSessionToken)}");
-    }
-
-    [Fact]
-    public void BuildConnectionUrl_WithApiKey_AppendsApiKeyAfterSessionToken()
-    {
-        var url = RelayClientPublisher.BuildConnectionUrl(ValidHubUrl, ValidSessionToken, "dev-key");
-
-        url.ShouldBe(
-            $"http://localhost:5000/relayhub?sessionToken={Uri.EscapeDataString(ValidSessionToken)}&apiKey=dev-key");
-    }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   ")]
-    public void BuildConnectionUrl_WithoutApiKey_DoesNotAppendApiKey(string? apiKey)
-    {
-        var url = RelayClientPublisher.BuildConnectionUrl(ValidHubUrl, ValidSessionToken, apiKey);
+        var url = RelayClientPublisher.BuildConnectionUrl(ValidHubUrl, ValidSessionToken);
 
         url.ShouldBe($"http://localhost:5000/relayhub?sessionToken={Uri.EscapeDataString(ValidSessionToken)}");
     }
@@ -422,28 +402,18 @@ public class RelayClientPublisherTests
     [Fact]
     public void BuildConnectionUrl_WithExistingQuery_AppendsParameters()
     {
-        var url = RelayClientPublisher.BuildConnectionUrl("http://localhost:5000/relayhub?foo=bar", ValidSessionToken, "dev-key");
+        var url = RelayClientPublisher.BuildConnectionUrl("http://localhost:5000/relayhub?foo=bar", ValidSessionToken);
 
         url.ShouldBe(
-            $"http://localhost:5000/relayhub?foo=bar&sessionToken={Uri.EscapeDataString(ValidSessionToken)}&apiKey=dev-key");
+            $"http://localhost:5000/relayhub?foo=bar&sessionToken={Uri.EscapeDataString(ValidSessionToken)}");
     }
 
     [Fact]
-    public void BuildConnectionUrl_EscapesSpecialCharactersInTokenAndApiKey()
+    public void BuildConnectionUrl_EscapesSpecialCharactersInToken()
     {
-        var url = RelayClientPublisher.BuildConnectionUrl(ValidHubUrl, "tok+en/=", "dev key");
+        var url = RelayClientPublisher.BuildConnectionUrl(ValidHubUrl, "tok+en/=");
 
-        url.ShouldBe("http://localhost:5000/relayhub?sessionToken=tok%2Ben%2F%3D&apiKey=dev%20key");
-    }
-
-    [Fact]
-    public void Constructor_WithApiKey_DoesNotThrowAndStaysDisconnected()
-    {
-        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
-        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidSessionToken, logger, "dev-key");
-
-        publisher.ShouldNotBeNull();
-        publisher.State.ShouldBe(HubConnectionState.Disconnected);
+        url.ShouldBe("http://localhost:5000/relayhub?sessionToken=tok%2Ben%2F%3D");
     }
 
     private sealed class TestSynchronizationContext(Action onPost) : SynchronizationContext

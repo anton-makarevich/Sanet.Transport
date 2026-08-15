@@ -108,9 +108,9 @@ public sealed class HubApplicationFactory : WebApplicationFactory<global::Progra
         });
     }
 
-    public HubConnection CreateRelayHubConnection(string? apiKey, string? sessionToken)
+    public HubConnection CreateRelayHubConnection(string? sessionToken)
     {
-        var url = BuildRelayHubUrl(Server.BaseAddress.ToString(), apiKey, sessionToken);
+        var url = BuildRelayHubUrl(Server.BaseAddress.ToString(), sessionToken);
 
         return new HubConnectionBuilder()
             .WithUrl(url, options =>
@@ -128,16 +128,10 @@ public sealed class HubApplicationFactory : WebApplicationFactory<global::Progra
             .Build();
     }
 
-    public static string BuildRelayHubUrl(string baseAddress, string? apiKey, string? sessionToken)
+    public static string BuildRelayHubUrl(string baseAddress, string? sessionToken)
     {
         var builder = new UriBuilder(new Uri(new Uri(baseAddress), RelayAuthenticationDefaults.HubPath));
         var queryParts = new List<string>();
-
-        if (apiKey is not null)
-        {
-            queryParts.Add(
-                $"{ApiKeyAuthenticationDefaults.ApiKeyQueryParameterName}={Uri.EscapeDataString(apiKey)}");
-        }
 
         if (sessionToken is not null)
         {

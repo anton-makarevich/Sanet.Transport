@@ -311,7 +311,7 @@ public class HubConfigurationTests
     }
 
     [Fact]
-    public async Task RelayAuthenticationMiddleware_DoesNotLogApiKeyOrSessionToken()
+    public async Task RelayAuthenticationMiddleware_DoesNotLogSessionToken()
     {
         var logger = new CapturingLogger<RelayAuthenticationMiddleware>();
         await using var factory = new HubApplicationFactory(relayAuthenticationLogger: logger);
@@ -320,7 +320,6 @@ public class HubConfigurationTests
         const string suppliedSessionToken = "distinctive-invalid-session-token";
         var url = HubApplicationFactory.BuildRelayHubUrl(
             client.BaseAddress!.ToString(),
-            HubApplicationFactory.ApiKey,
             suppliedSessionToken);
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
 

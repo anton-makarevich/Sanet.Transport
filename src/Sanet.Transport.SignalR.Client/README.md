@@ -72,11 +72,7 @@ string hubUrl = "wss://relay.example.com/relayhub";
 string roomCode = "ABC234";
 string sessionToken = "session-token-from-rest-api";
 
-// Optional API key; required when the relay hub enforces relay authentication
-// (RelayAuthenticationMiddleware). Hubs that don't require an api key can omit it.
-string? apiKey = "api-key-from-relay-api";
-
-await using var publisher = new RelayClientPublisher(hubUrl, roomCode, sessionToken, apiKey: apiKey);
+await using var publisher = new RelayClientPublisher(hubUrl, roomCode, sessionToken);
 
 // Optional: Listen for hub events
 publisher.PeerConnected += peerId => Console.WriteLine($"Peer connected: {peerId}");
