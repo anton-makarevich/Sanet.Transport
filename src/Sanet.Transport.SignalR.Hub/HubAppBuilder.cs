@@ -32,7 +32,14 @@ public static class HubAppBuilder
     {
         var builder = options is null
             ? WebApplication.CreateBuilder(args)
-            : WebApplication.CreateBuilder(options);
+            : WebApplication.CreateBuilder(new WebApplicationOptions
+            {
+                ApplicationName = options.ApplicationName,
+                ContentRootPath = options.ContentRootPath,
+                EnvironmentName = options.EnvironmentName,
+                WebRootPath = options.WebRootPath,
+                Args = args
+            });
 
         // Single-line console output with timestamps so room lifecycle, connections and relay
         // traffic are easy to follow while debugging the relay locally.
