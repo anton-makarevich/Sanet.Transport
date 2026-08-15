@@ -30,12 +30,15 @@ jobs:
       - name: Run SignalR Server Tests
         run: dotnet test tests/Sanet.Transport.SignalR.Tests/Sanet.Transport.SignalR.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport.SignalR.Client]* /p:Include=[Sanet.Transport.SignalR.Server]* /p:Exclude="[Sanet.Transport.SignalR.Client]*Discovery/UdpClientFactory.cs"
 
+      - name: Run Relay Client SDK Tests
+        run: dotnet test tests/Sanet.Transport.SignalR.Client.Relay.Tests/Sanet.Transport.SignalR.Client.Relay.Tests.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:ExcludeByAttribute=GeneratedCodeAttribute /p:Include=[Sanet.Transport.SignalR.Client.Relay]*
+
       - name: Upload test results
         uses: codecov/codecov-action@v7
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          files: tests/Sanet.Transport.Rx.Tests/coverage.opencover.xml,tests/Sanet.Transport.Channel.Tests/coverage.opencover.xml,tests/Sanet.Transport.SignalR.Tests/coverage.opencover.xml
+          files: tests/Sanet.Transport.Rx.Tests/coverage.opencover.xml,tests/Sanet.Transport.Channel.Tests/coverage.opencover.xml,tests/Sanet.Transport.SignalR.Tests/coverage.opencover.xml,tests/Sanet.Transport.SignalR.Client.Relay.Tests/coverage.opencover.xml
   
   
   publish-nuget:
@@ -58,6 +61,7 @@ jobs:
           dotnet pack src/Sanet.Transport.Channel/Sanet.Transport.Channel.csproj --configuration Release --output ${{ env.NuGetDirectory }}
           dotnet pack src/Sanet.Transport.SignalR.Client/Sanet.Transport.SignalR.Client.csproj --configuration Release --output ${{ env.NuGetDirectory }}
           dotnet pack src/Sanet.Transport.SignalR.Server/Sanet.Transport.SignalR.Server.csproj --configuration Release --output ${{ env.NuGetDirectory }}
+          dotnet pack src/Sanet.Transport.SignalR.Client.Relay/Sanet.Transport.SignalR.Client.Relay.csproj --configuration Release --output ${{ env.NuGetDirectory }}
 
       - name: Publish NuGet packages
         env:
