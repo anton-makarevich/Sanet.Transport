@@ -1,9 +1,6 @@
-using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http.Connections;
-using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
-using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -12,7 +9,13 @@ using Sanet.Transport.SignalR.Hub.Tests.TestLoggers;
 
 namespace Sanet.Transport.SignalR.Hub.Tests;
 
-public sealed class HubApplicationFactory : WebApplicationFactory<global::Program>
+/// <summary>
+/// Boots the real relay hub over a Kestrel listener on an ephemeral loopback port so
+/// integration tests exercise genuine HTTP and WebSocket transports instead of the
+/// in-process TestServer pipe. Public surface mirrors the previous
+/// <see cref="WebApplicationFactory{TEntryPoint}"/>-based fixture.
+/// </summary>
+public sealed class HubApplicationFactory : IAsyncDisposable
 {
     public const string ApiKey = "test-api-key";
 
@@ -28,6 +31,11 @@ public sealed class HubApplicationFactory : WebApplicationFactory<global::Progra
     private readonly TimeProvider? _timeProvider;
     private readonly CapturingLogger<ApiKeyAuthenticationMiddleware>? _apiKeyAuthenticationLogger;
     private readonly CapturingLogger<RelayAuthenticationMiddleware>? _relayAuthenticationLogger;
+
+    private readonly object _gate = new();
+    private WebApplication? _app;
+    private string? _baseAddress;
+    private bool _started;
 
     public HubApplicationFactory(
         int maxConcurrentRooms = 10,
@@ -57,71 +65,23 @@ public sealed class HubApplicationFactory : WebApplicationFactory<global::Progra
         _relayAuthenticationLogger = relayAuthenticationLogger;
     }
 
-    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    public IServiceProvider Services => App.Services;
+
+    public HttpClient CreateClient()
     {
-        builder.UseEnvironment("Testing");
-        builder.ConfigureAppConfiguration((_, configuration) =>
-        {
-            configuration.AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Hub:ApiKey"] = ApiKey,
-                ["Hub:MaxConcurrentRooms"] = _maxConcurrentRooms.ToString(),
-                ["Hub:JoinRateLimitPerMinute"] = _joinRateLimitPerMinute.ToString(),
-                ["Hub:RelayRateLimitPerMinute"] = _relayRateLimitPerMinute.ToString(),
-                ["Hub:MaxRelayPayloadBytes"] = _maxRelayPayloadBytes.ToString(),
-                ["Hub:RoomTtlSeconds"] = _roomTtlSeconds.ToString(),
-                ["Hub:DissolutionGracePeriodSeconds"] = _dissolutionGracePeriodSeconds.ToString(),
-                ["Hub:PeerDisconnectNotificationDelaySeconds"] = _peerDisconnectNotificationDelaySeconds.ToString(),
-                ["Hub:SignalR:KeepAliveIntervalSeconds"] = _signalRKeepAliveIntervalSeconds.ToString(),
-                ["Hub:SignalR:ClientTimeoutIntervalSeconds"] = _signalRClientTimeoutIntervalSeconds.ToString()
-            });
-        });
-
-        builder.ConfigureTestServices(services =>
-        {
-            services.PostConfigure<Microsoft.AspNetCore.SignalR.HubOptions>(options =>
-            {
-                options.KeepAliveInterval = TimeSpan.FromSeconds(_signalRKeepAliveIntervalSeconds);
-                options.ClientTimeoutInterval = TimeSpan.FromSeconds(_signalRClientTimeoutIntervalSeconds);
-            });
-
-            if (_timeProvider is not null)
-            {
-                var existing = services.Where(descriptor => descriptor.ServiceType == typeof(TimeProvider)).ToList();
-                foreach (var descriptor in existing)
-                {
-                    services.Remove(descriptor);
-                }
-
-                services.AddSingleton(_timeProvider);
-            }
-
-            if (_apiKeyAuthenticationLogger is not null)
-            {
-                services.AddSingleton<ILogger<ApiKeyAuthenticationMiddleware>>(_apiKeyAuthenticationLogger);
-            }
-
-            if (_relayAuthenticationLogger is not null)
-            {
-                services.AddSingleton<ILogger<RelayAuthenticationMiddleware>>(_relayAuthenticationLogger);
-            }
-        });
+        _ = App;
+        return new HttpClient { BaseAddress = new Uri(_baseAddress!) };
     }
 
     public HubConnection CreateRelayHubConnection(string? sessionToken)
     {
-        var url = BuildRelayHubUrl(Server.BaseAddress.ToString(), sessionToken);
+        _ = App;
+        var url = BuildRelayHubUrl(_baseAddress!, sessionToken);
 
         return new HubConnectionBuilder()
             .WithUrl(url, options =>
             {
                 options.Transports = HttpTransportType.WebSockets;
-                options.HttpMessageHandlerFactory = _ => Server.CreateHandler();
-                options.WebSocketFactory = async (context, cancellationToken) =>
-                {
-                    var webSocketClient = Server.CreateWebSocketClient();
-                    return await webSocketClient.ConnectAsync(context.Uri, cancellationToken);
-                };
             })
             .WithKeepAliveInterval(TimeSpan.FromDays(1))
             .WithServerTimeout(TimeSpan.FromDays(2))
@@ -141,5 +101,113 @@ public sealed class HubApplicationFactory : WebApplicationFactory<global::Progra
 
         builder.Query = string.Join('&', queryParts);
         return builder.Uri.AbsoluteUri;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        WebApplication? app;
+        lock (_gate)
+        {
+            app = _app;
+            _app = null;
+        }
+
+        if (app is null)
+        {
+            return;
+        }
+
+        if (_started)
+        {
+            await app.StopAsync();
+        }
+
+        await app.DisposeAsync();
+    }
+
+    private WebApplication App
+    {
+        get
+        {
+            lock (_gate)
+            {
+                if (_app is null)
+                {
+                    var app = HubAppBuilder.CreateApp(
+                        [],
+                        options: new WebApplicationOptions
+                        {
+                            Args = [],
+                            EnvironmentName = "Testing",
+                            ApplicationName = typeof(HubAppBuilder).Assembly.GetName().Name
+                        },
+                        configureBuilder: ConfigureTestBuilder);
+
+                    app.Urls.Add("http://127.0.0.1:0");
+                    app.StartAsync().GetAwaiter().GetResult();
+
+                    _app = app;
+                    _started = true;
+                    _baseAddress = ResolveBaseAddress(app);
+                }
+
+                return _app;
+            }
+        }
+    }
+
+    private void ConfigureTestBuilder(WebApplicationBuilder builder)
+    {
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Hub:ApiKey"] = ApiKey,
+            ["Hub:MaxConcurrentRooms"] = _maxConcurrentRooms.ToString(),
+            ["Hub:JoinRateLimitPerMinute"] = _joinRateLimitPerMinute.ToString(),
+            ["Hub:RelayRateLimitPerMinute"] = _relayRateLimitPerMinute.ToString(),
+            ["Hub:MaxRelayPayloadBytes"] = _maxRelayPayloadBytes.ToString(),
+            ["Hub:RoomTtlSeconds"] = _roomTtlSeconds.ToString(),
+            ["Hub:DissolutionGracePeriodSeconds"] = _dissolutionGracePeriodSeconds.ToString(),
+            ["Hub:PeerDisconnectNotificationDelaySeconds"] = _peerDisconnectNotificationDelaySeconds.ToString(),
+            ["Hub:SignalR:KeepAliveIntervalSeconds"] = _signalRKeepAliveIntervalSeconds.ToString(),
+            ["Hub:SignalR:ClientTimeoutIntervalSeconds"] = _signalRClientTimeoutIntervalSeconds.ToString()
+        });
+
+        builder.Services.PostConfigure<Microsoft.AspNetCore.SignalR.HubOptions>(options =>
+        {
+            options.KeepAliveInterval = TimeSpan.FromSeconds(_signalRKeepAliveIntervalSeconds);
+            options.ClientTimeoutInterval = TimeSpan.FromSeconds(_signalRClientTimeoutIntervalSeconds);
+        });
+
+        if (_timeProvider is not null)
+        {
+            var existing = builder.Services.Where(descriptor => descriptor.ServiceType == typeof(TimeProvider)).ToList();
+            foreach (var descriptor in existing)
+            {
+                builder.Services.Remove(descriptor);
+            }
+
+            builder.Services.AddSingleton(_timeProvider);
+        }
+
+        if (_apiKeyAuthenticationLogger is not null)
+        {
+            builder.Services.AddSingleton<ILogger<ApiKeyAuthenticationMiddleware>>(_apiKeyAuthenticationLogger);
+        }
+
+        if (_relayAuthenticationLogger is not null)
+        {
+            builder.Services.AddSingleton<ILogger<RelayAuthenticationMiddleware>>(_relayAuthenticationLogger);
+        }
+    }
+
+    private static string ResolveBaseAddress(WebApplication app)
+    {
+        var address = app.Urls.FirstOrDefault();
+        if (string.IsNullOrEmpty(address))
+        {
+            throw new InvalidOperationException("The hub application did not expose a bound address.");
+        }
+
+        return address;
     }
 }

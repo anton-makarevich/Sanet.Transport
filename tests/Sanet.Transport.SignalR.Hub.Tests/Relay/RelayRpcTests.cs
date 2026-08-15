@@ -55,8 +55,11 @@ public class RelayRpcTests
         clientA.On<RelayEnvelope>(nameof(IRelayHub.OnReceive), envelope => clientAReceived.TrySetResult(envelope));
         hostB.On<RelayEnvelope>(nameof(IRelayHub.OnReceive), envelope => hostBReceived.TrySetResult(envelope));
 
+        var clientAAttached = RegisterPeerAttachedSignal(hostA);
+
         await hostA.StartAsync();
         await clientA.StartAsync();
+        await clientAAttached.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await hostB.StartAsync();
 
         var payload = """{"kind":"ping"}""";
@@ -93,8 +96,11 @@ public class RelayRpcTests
             nameof(IRelayHub.OnReceive),
             envelope => received.TrySetResult(envelope));
 
+        var clientAttached = RegisterPeerAttachedSignal(hostConnection);
+
         await hostConnection.StartAsync();
         await clientConnection.StartAsync();
+        await clientAttached.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         await hostConnection.InvokeAsync(
             nameof(RelayHub.Relay),
@@ -274,8 +280,11 @@ public class RelayRpcTests
             }
         });
 
+        var clientAttached = RegisterPeerAttachedSignal(hostConnection);
+
         await hostConnection.StartAsync();
         await clientConnection.StartAsync();
+        await clientAttached.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         await hostConnection.InvokeAsync(
             nameof(RelayHub.Relay),
@@ -298,6 +307,16 @@ public class RelayRpcTests
         receiveCount.ShouldBe(2);
         var delivered = await Task.WhenAny(thirdAttemptReceived.Task, Task.Delay(1000));
         delivered.ShouldNotBe(thirdAttemptReceived.Task);
+    }
+
+    private static TaskCompletionSource<T> NewCompletionSource<T>() =>
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private static TaskCompletionSource<string> RegisterPeerAttachedSignal(HubConnection host)
+    {
+        var attached = NewCompletionSource<string>();
+        host.On<string>(nameof(IRelayHub.OnPeerConnected), id => attached.TrySetResult(id));
+        return attached;
     }
 
     private static async Task<ReadyHost> CreateReadyHostAsync(HttpClient client)
