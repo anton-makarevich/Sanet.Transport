@@ -13,6 +13,7 @@ A lightweight transport layer for message passing between distributed systems.
 | Sanet.Transport.Channel      | [![NuGet](https://img.shields.io/nuget/v/Sanet.Transport.Channel?logo=nuget)](https://www.nuget.org/packages/Sanet.Transport.Channel/) |
 | Sanet.Transport.SignalR.Client | [![NuGet](https://img.shields.io/nuget/v/Sanet.Transport.SignalR.Client?logo=nuget)](https://www.nuget.org/packages/Sanet.Transport.SignalR.Client/) |
 | Sanet.Transport.SignalR.Server | [![NuGet](https://img.shields.io/nuget/v/Sanet.Transport.SignalR.Server?logo=nuget)](https://www.nuget.org/packages/Sanet.Transport.SignalR.Server/) |
+| Sanet.Transport.SignalR.Client.Relay | [![NuGet](https://img.shields.io/nuget/v/Sanet.Transport.SignalR.Client.Relay?logo=nuget)](https://www.nuget.org/packages/Sanet.Transport.SignalR.Client.Relay/) |
 | Sanet.Transport.SignalR.Hub  | [![Docker Image](https://img.shields.io/badge/Docker-Container-blue?logo=docker)](https://github.com/anton-makarevich/Sanet.Transport/pkgs/container/sanet.transport%2Fhub) |
 
 ## Overview
@@ -48,6 +49,7 @@ dotnet add package Sanet.Transport.Rx
 dotnet add package Sanet.Transport.Channel
 dotnet add package Sanet.Transport.SignalR.Client
 dotnet add package Sanet.Transport.SignalR.Server
+dotnet add package Sanet.Transport.SignalR.Client.Relay
 ```
 
 ## Relay Hub Server
@@ -55,6 +57,10 @@ dotnet add package Sanet.Transport.SignalR.Server
 `Sanet.Transport.SignalR.Hub` is a self-hosted cloud relay service that backs `RelayClientPublisher`. It hosts a SignalR hub for real-time message relay and a REST API for room lifecycle management (create, join, ready, close, kick). It is not a NuGet package — run it directly or via Docker.
 
 - See [`src/Sanet.Transport.SignalR.Hub/README.md`](src/Sanet.Transport.SignalR.Hub/README.md) for configuration, local run, and Docker instructions.
+
+## Relay Client SDK
+
+`Sanet.Transport.SignalR.Client.Relay` is the client SDK for the relay hub's room-management REST API. It provides a typed room lifecycle client (`IRelayRoomClient`) with create, join, ready, close, and remove-member operations, plus the wire DTOs, error types, and hub constants.
 
 ## SignalR Client Publishers
 
@@ -115,6 +121,7 @@ await publisher.PublishMessage(new TransportMessage
 - **Sanet.Transport.Channel**: Implementation using System.Threading.Channels
 - **Sanet.Transport.SignalR.Client**: Client-side SignalR publishers (`SignalRClientPublisher`, `RelayClientPublisher`) and UDP discovery
 - **Sanet.Transport.SignalR.Server**: Server-side embedded host (`SignalRHostManager`) and server publisher
+- **Sanet.Transport.SignalR.Client.Relay**: Client SDK for the relay hub room-management REST API (`IRelayRoomClient`, DTOs, error types)
 - **Sanet.Transport.SignalR.Hub**: Cloud relay room-management web service (SignalR hub + REST API)
 
 ## License
