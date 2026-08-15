@@ -409,6 +409,26 @@ public class RelayClientPublisherTests
     }
 
     [Fact]
+    public void BuildConnectionUrl_WithExistingSessionToken_ReplacesItAndPreservesOtherParameters()
+    {
+        var url = RelayClientPublisher.BuildConnectionUrl(
+            "http://localhost:5000/relayhub?sessionToken=old-token&foo=bar", ValidSessionToken);
+
+        url.ShouldBe(
+            $"http://localhost:5000/relayhub?foo=bar&sessionToken={Uri.EscapeDataString(ValidSessionToken)}");
+    }
+
+    [Fact]
+    public void BuildConnectionUrl_WithExistingSessionTokenOnly_ReplacesIt()
+    {
+        var url = RelayClientPublisher.BuildConnectionUrl(
+            "http://localhost:5000/relayhub?sessionToken=old-token", ValidSessionToken);
+
+        url.ShouldBe(
+            $"http://localhost:5000/relayhub?sessionToken={Uri.EscapeDataString(ValidSessionToken)}");
+    }
+
+    [Fact]
     public void BuildConnectionUrl_EscapesSpecialCharactersInToken()
     {
         var url = RelayClientPublisher.BuildConnectionUrl(ValidHubUrl, "tok+en/=");

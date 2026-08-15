@@ -62,6 +62,29 @@ public class RelayHubConnectionTests
         connection.State.ShouldBe(HubConnectionState.Connected);
     }
 
+    [Fact]
+    public async Task Connect_WithApiKeyOnly_IsRejected()
+    {
+        await using var factory = new HubApplicationFactory();
+        using var client = factory.CreateClient();
+
+        var baseUri = new Uri(client.BaseAddress!.ToString());
+        var negotiateUri = new UriBuilder(new Uri(baseUri, RelayAuthenticationDefaults.HubPath))
+        {
+            Query = "negotiateVersion=1"
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, negotiateUri.Uri);
+        request.Headers.Add(ApiKeyAuthenticationDefaults.HeaderName, HubApplicationFactory.ApiKey);
+
+        using var response = await client.SendAsync(request);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+
+        var body = await response.Content.ReadAsStringAsync();
+        body.ShouldBeEmpty();
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

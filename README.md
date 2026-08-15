@@ -84,13 +84,17 @@ await publisher.PublishMessage(new TransportMessage
 Used for internet play across different networks/NATs. Connects outbound over WebSockets to a cloud `RelayHub` using room codes and session tokens issued by a room management REST API.
 
 ```csharp
+using Microsoft.Extensions.Logging;
 using Sanet.Transport;
 using Sanet.Transport.SignalR.Client.Publishers;
+
+using var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
 
 var publisher = new RelayClientPublisher(
     hubUrl: "wss://relay.example.com/relayhub",
     roomCode: "ABC234",
-    sessionToken: sessionTokenFromRestApi);
+    sessionToken: sessionTokenFromRestApi,
+    logger: loggerFactory.CreateLogger<RelayClientPublisher>());
 
 publisher.Subscribe(message => Console.WriteLine($"Received: {message.MessageType}"));
 

@@ -121,7 +121,8 @@ public class RelayClientPublisher : ITransportPublisher
     }
 
     /// <summary>
-    /// Builds the SignalR hub connection URL, appending the session token as a query-string parameter.
+    /// Builds the SignalR hub connection URL, appending the session token as a query-string
+    /// parameter and replacing any sessionToken parameter already present in the hub URL.
     /// </summary>
     /// <param name="hubUrl">The base URL of the SignalR relay hub.</param>
     /// <param name="sessionToken">The session token issued by the REST room join/create API.</param>
@@ -136,7 +137,13 @@ public class RelayClientPublisher : ITransportPublisher
         }
         else
         {
-            uriBuilder.Query = uriBuilder.Query.TrimStart('?') + "&" + queryToAppend;
+            var existingQueryParameters = uriBuilder.Query.TrimStart('?')
+                .Split('&', StringSplitOptions.RemoveEmptyEntries)
+                .Where(pair => !pair
+                    .Split('=', 2)[0]
+                    .Equals("sessionToken", StringComparison.OrdinalIgnoreCase));
+
+            uriBuilder.Query = string.Join('&', existingQueryParameters.Append(queryToAppend));
         }
 
         return uriBuilder.Uri.AbsoluteUri;

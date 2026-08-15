@@ -6,7 +6,9 @@ namespace Sanet.Transport.SignalR.Hub.Security;
 /// <summary>
 /// Validates the query-string session token for the SignalR relay hub path before the
 /// WebSocket upgrade completes. Never logs credentials; only the rejection reason and
-/// (for successful auth) the non-secret session identity.
+/// (for successful auth) the non-secret session identity. After successful authentication
+/// the session token is removed from the request query string so it never reaches
+/// downstream URL logging, tracing, or exception telemetry.
 /// </summary>
 public sealed class RelayAuthenticationMiddleware(RequestDelegate next)
 {
@@ -51,7 +53,16 @@ public sealed class RelayAuthenticationMiddleware(RequestDelegate next)
             session.Role);
 
         context.Items[RelayAuthenticationDefaults.AuthenticatedSessionItemKey] = session;
+        RemoveSessionTokenFromQueryString(context);
         await next(context);
+    }
+
+    private static void RemoveSessionTokenFromQueryString(HttpContext context)
+    {
+        context.Request.QueryString = QueryString.Create(
+            context.Request.Query.Where(pair => !pair.Key.Equals(
+                ApiKeyAuthenticationDefaults.SessionTokenQueryParameterName,
+                StringComparison.OrdinalIgnoreCase)));
     }
 
     private static void RejectUnauthorized(HttpContext context)
