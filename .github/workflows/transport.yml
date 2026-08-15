@@ -8,7 +8,10 @@ on:
   workflow_dispatch:
 env:
   NuGetDirectory: ${{ github.workspace}}/nuget
-  
+
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest

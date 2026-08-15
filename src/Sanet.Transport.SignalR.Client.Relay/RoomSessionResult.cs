@@ -1,9 +1,10 @@
 namespace Sanet.Transport.SignalR.Client.Relay;
 
 /// <summary>
-/// Result of creating a relay room. Success carries the values needed to set up the relay publisher.
+/// Result of a relay room session operation (create or join). Success carries the
+/// values needed to set up the relay publisher.
 /// </summary>
-public sealed record RoomCreateResult(
+public sealed record RoomSessionResult(
     bool Success,
     string? RoomCode,
     string? SessionToken,
@@ -12,7 +13,7 @@ public sealed record RoomCreateResult(
     Guid? HostGameId,
     RelayClientError? Error)
 {
-    public static RoomCreateResult Succeeded(
+    public static RoomSessionResult Succeeded(
         string roomCode,
         string sessionToken,
         string role,
@@ -20,6 +21,6 @@ public sealed record RoomCreateResult(
         Guid hostGameId) =>
         new(true, roomCode, sessionToken, role, deviceSessionId, hostGameId, null);
 
-    public static RoomCreateResult Failed(RelayClientError error) =>
+    public static RoomSessionResult Failed(RelayClientError error) =>
         new(false, null, null, null, null, null, error);
 }

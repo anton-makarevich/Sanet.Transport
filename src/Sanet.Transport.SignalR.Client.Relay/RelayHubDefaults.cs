@@ -16,6 +16,6 @@ public static class RelayHubDefaults
     /// <param name="baseUrl">Base URL of the relay hub (may include a trailing slash).</param>
     public static string BuildHubUrl(string baseUrl)
     {
-        return $"{baseUrl.TrimEnd('/')}{HubPath}";
+        return $"{baseUrl.Trim().TrimEnd('/')}{HubPath}";
     }
 }

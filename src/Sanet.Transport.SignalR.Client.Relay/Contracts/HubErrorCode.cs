@@ -6,17 +6,17 @@ namespace Sanet.Transport.SignalR.Client.Relay.Contracts;
 /// </summary>
 public enum HubErrorCode
 {
-    HubAtCapacity,
-    RoomNotFound,
-    RoomExpired,
-    HostNotReady,
-    NotHost,
-    RateLimited,
-    MessageTooLarge,
-    RoomFull,
-    InvalidRoomState,
-    MemberNotFound,
-    CannotRemoveHost,
-    HostDisconnected,
-    ConnectionSuperseded
+    HubAtCapacity = 0,
+    RoomNotFound = 1,
+    RoomExpired = 2,
+    HostNotReady = 3,
+    NotHost = 4,
+    RateLimited = 5,
+    MessageTooLarge = 6,
+    RoomFull = 7,
+    InvalidRoomState = 8,
+    MemberNotFound = 9,
+    CannotRemoveHost = 10,
+    HostDisconnected = 11,
+    ConnectionSuperseded = 12
 }

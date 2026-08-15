@@ -38,161 +38,134 @@ public sealed class RelayRoomClient : IRelayRoomClient
         _jsonOptions.Converters.Add(new TolerantHubErrorCodeConverter());
     }
 
-    public async Task<RoomCreateResult> Create(
+    public async Task<RoomSessionResult> Create(
         Guid gameId,
         CancellationToken cancellationToken = default,
         RelayClientOptions? options = null)
     {
-        try
-        {
-            _logger.LogInformation(
-                "Creating relay room for game {GameId}",
-                gameId);
+        _logger.LogInformation(
+            "Creating relay room for game {GameId}",
+            gameId);
 
-            using var request = await CreateRequest(
-                HttpMethod.Post,
-                "api/rooms",
-                sessionToken: null,
-                options);
-            request.Content = JsonContent.Create(
-                new CreateRoomRequest(gameId),
-                options: _jsonOptions);
-
-            using var response = await _httpClient.SendAsync(request, cancellationToken);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
-
-            if (TryMapSpecialStatus(response.StatusCode, body, out var specialError))
-            {
-                return RoomCreateResult.Failed(specialError);
-            }
-
-            var payload = DeserializeOrNull<CreateRoomResponse>(body);
-            if (payload is null)
-            {
-                return RoomCreateResult.Failed(DeserializationError());
-            }
-
-            if (response.IsSuccessStatusCode && payload.Success
-                && !string.IsNullOrEmpty(payload.RoomCode)
-                && !string.IsNullOrEmpty(payload.SessionToken)
-                && payload.DeviceSessionId is { } deviceSessionId
-                && payload.HostGameId is { } hostGameId)
-            {
-                _logger.LogInformation(
-                    "Created relay room {RoomCode} for game {GameId}",
-                    payload.RoomCode,
-                    gameId);
-
-                return RoomCreateResult.Succeeded(
-                    payload.RoomCode,
-                    payload.SessionToken,
-                    HostRole,
-                    deviceSessionId,
-                    hostGameId);
-            }
-
-            return RoomCreateResult.Failed(MapHubError(payload.Error, response.StatusCode));
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (TaskCanceledException ex)
-        {
-            _logger.LogError(ex, "Relay create room request timed out for game {GameId}", gameId);
-            return RoomCreateResult.Failed(TimeoutError());
-        }
-        catch (HttpRequestException ex)
-        {
-            _logger.LogError(ex, "Relay create room network error for game {GameId}", gameId);
-            return RoomCreateResult.Failed(NetworkError());
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogError(ex, "Relay create room deserialization error for game {GameId}", gameId);
-            return RoomCreateResult.Failed(DeserializationError());
-        }
-        catch (RelayConfigurationException ex)
-        {
-            _logger.LogError(ex, "Relay create room configuration error for game {GameId}", gameId);
-            return RoomCreateResult.Failed(ConfigurationError());
-        }
+        return await ExecuteAsync(
+            ct => CreateCore(gameId, options, ct),
+            RoomSessionResult.Failed,
+            "create room",
+            cancellationToken);
     }
 
-    public async Task<RoomJoinResult> Join(
-        string roomCode,
-        string? sessionToken,
-        CancellationToken cancellationToken = default)
+    private async Task<RoomSessionResult> CreateCore(
+        Guid gameId,
+        RelayClientOptions? options,
+        CancellationToken cancellationToken)
     {
-        try
+        using var request = await CreateRequest(
+            HttpMethod.Post,
+            "api/rooms",
+            sessionToken: null,
+            options);
+        request.Content = JsonContent.Create(
+            new CreateRoomRequest(gameId),
+            options: _jsonOptions);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (TryMapSpecialStatus(response.StatusCode, body, out var specialError))
+        {
+            return RoomSessionResult.Failed(specialError);
+        }
+
+        var payload = DeserializeOrNull<CreateRoomResponse>(body);
+        if (payload is null)
+        {
+            return RoomSessionResult.Failed(DeserializationError());
+        }
+
+        if (response.IsSuccessStatusCode && payload.Success
+            && !string.IsNullOrEmpty(payload.RoomCode)
+            && !string.IsNullOrEmpty(payload.SessionToken)
+            && payload.DeviceSessionId is { } deviceSessionId
+            && payload.HostGameId is { } hostGameId)
         {
             _logger.LogInformation(
-                "Joining relay room {RoomCode}",
-                roomCode);
+                "Created relay room {RoomCode} for game {GameId}",
+                payload.RoomCode,
+                gameId);
 
-            using var request = await CreateRequest(
-                HttpMethod.Post,
-                $"api/rooms/{Uri.EscapeDataString(roomCode)}/join",
-                sessionToken: sessionToken);
-
-            using var response = await _httpClient.SendAsync(request, cancellationToken);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
-
-            if (TryMapSpecialStatus(response.StatusCode, body, out var specialError))
-            {
-                return RoomJoinResult.Failed(specialError);
-            }
-
-            var payload = DeserializeOrNull<JoinResponse>(body);
-            if (payload is null)
-            {
-                return RoomJoinResult.Failed(DeserializationError());
-            }
-
-            if (response.IsSuccessStatusCode && payload.Success
-                                             && !string.IsNullOrEmpty(payload.SessionToken)
-                                             && !string.IsNullOrEmpty(payload.Role)
-                                             && payload is { DeviceSessionId: { } deviceSessionId, HostGameId: { } hostGameId })
-            {
-                _logger.LogInformation(
-                    "Joined relay room {RoomCode} with role {Role}",
-                    roomCode,
-                    payload.Role);
-
-                return RoomJoinResult.Succeeded(
-                    roomCode,
-                    payload.SessionToken,
-                    payload.Role,
-                    deviceSessionId,
-                    hostGameId);
-            }
-
-            return RoomJoinResult.Failed(MapHubError(payload.Error, response.StatusCode));
+            return RoomSessionResult.Succeeded(
+                payload.RoomCode,
+                payload.SessionToken,
+                HostRole,
+                deviceSessionId,
+                hostGameId);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+
+        return RoomSessionResult.Failed(MapHubError(payload.Error, response.StatusCode));
+    }
+
+    public async Task<RoomSessionResult> Join(
+        string roomCode,
+        string? sessionToken,
+        CancellationToken cancellationToken = default,
+        RelayClientOptions? options = null)
+    {
+        _logger.LogInformation(
+            "Joining relay room {RoomCode}",
+            roomCode);
+
+        return await ExecuteAsync(
+            ct => JoinCore(roomCode, sessionToken, options, ct),
+            RoomSessionResult.Failed,
+            "join room",
+            cancellationToken);
+    }
+
+    private async Task<RoomSessionResult> JoinCore(
+        string roomCode,
+        string? sessionToken,
+        RelayClientOptions? options,
+        CancellationToken cancellationToken)
+    {
+        using var request = await CreateRequest(
+            HttpMethod.Post,
+            $"api/rooms/{Uri.EscapeDataString(roomCode)}/join",
+            sessionToken: sessionToken,
+            options);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (TryMapSpecialStatus(response.StatusCode, body, out var specialError))
         {
-            throw;
+            return RoomSessionResult.Failed(specialError);
         }
-        catch (TaskCanceledException ex)
+
+        var payload = DeserializeOrNull<JoinResponse>(body);
+        if (payload is null)
         {
-            _logger.LogError(ex, "Relay join room request timed out for room {RoomCode}", roomCode);
-            return RoomJoinResult.Failed(TimeoutError());
+            return RoomSessionResult.Failed(DeserializationError());
         }
-        catch (HttpRequestException ex)
+
+        if (response.IsSuccessStatusCode && payload.Success
+                                         && !string.IsNullOrEmpty(payload.SessionToken)
+                                         && !string.IsNullOrEmpty(payload.Role)
+                                         && payload is { DeviceSessionId: { } deviceSessionId, HostGameId: { } hostGameId })
         {
-            _logger.LogError(ex, "Relay join room network error for room {RoomCode}", roomCode);
-            return RoomJoinResult.Failed(NetworkError());
+            _logger.LogInformation(
+                "Joined relay room {RoomCode} with role {Role}",
+                roomCode,
+                payload.Role);
+
+            return RoomSessionResult.Succeeded(
+                roomCode,
+                payload.SessionToken,
+                payload.Role,
+                deviceSessionId,
+                hostGameId);
         }
-        catch (JsonException ex)
-        {
-            _logger.LogError(ex, "Relay join room deserialization error for room {RoomCode}", roomCode);
-            return RoomJoinResult.Failed(DeserializationError());
-        }
-        catch (RelayConfigurationException ex)
-        {
-            _logger.LogError(ex, "Relay join room configuration error for room {RoomCode}", roomCode);
-            return RoomJoinResult.Failed(ConfigurationError());
-        }
+
+        return RoomSessionResult.Failed(MapHubError(payload.Error, response.StatusCode));
     }
 
     public Task<RoomOperationResult> Ready(
@@ -225,121 +198,93 @@ public sealed class RelayRoomClient : IRelayRoomClient
         string roomCode,
         string sessionToken,
         Guid deviceSessionId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        RelayClientOptions? options = null)
     {
-        try
+        _logger.LogInformation(
+            "Removing device session {DeviceSessionId} from relay room {RoomCode}",
+            deviceSessionId,
+            roomCode);
+
+        return await ExecuteAsync(
+            ct => RemoveMemberCore(roomCode, sessionToken, deviceSessionId, options, ct),
+            RoomOperationResult.Failed,
+            "remove member",
+            cancellationToken);
+    }
+
+    private async Task<RoomOperationResult> RemoveMemberCore(
+        string roomCode,
+        string sessionToken,
+        Guid deviceSessionId,
+        RelayClientOptions? options,
+        CancellationToken cancellationToken)
+    {
+        using var request = await CreateRequest(
+            HttpMethod.Delete,
+            $"api/rooms/{Uri.EscapeDataString(roomCode)}/members/{deviceSessionId:D}",
+            sessionToken,
+            options);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (TryMapSpecialStatus(response.StatusCode, body, out var specialError))
         {
-            _logger.LogInformation(
-                "Removing device session {DeviceSessionId} from relay room {RoomCode}",
-                deviceSessionId,
-                roomCode);
-
-            using var request = await CreateRequest(
-                HttpMethod.Delete,
-                $"api/rooms/{Uri.EscapeDataString(roomCode)}/members/{deviceSessionId:D}",
-                sessionToken);
-
-            using var response = await _httpClient.SendAsync(request, cancellationToken);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
-
-            // RemoveMember returns a bare 401 (no HubError body) when the session token is missing.
-            if (response.StatusCode == HttpStatusCode.Unauthorized)
-            {
-                return RoomOperationResult.Failed(UnauthorizedError());
-            }
-
-            if (TryMapSpecialStatus(response.StatusCode, body, out var specialError))
-            {
-                return RoomOperationResult.Failed(specialError);
-            }
-
-            var payload = DeserializeOrNull<RemoveMemberResponse>(body);
-            if (payload is null)
-            {
-                return RoomOperationResult.Failed(DeserializationError());
-            }
-
-            if (response.IsSuccessStatusCode && payload.Success)
-            {
-                _logger.LogInformation(
-                    "Removed device session {DeviceSessionId} from relay room {RoomCode}",
-                    deviceSessionId,
-                    roomCode);
-                return RoomOperationResult.Succeeded();
-            }
-
-            return RoomOperationResult.Failed(MapHubError(payload.Error, response.StatusCode));
+            return RoomOperationResult.Failed(specialError);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+
+        var payload = DeserializeOrNull<RemoveMemberResponse>(body);
+        if (payload is null)
         {
-            throw;
-        }
-        catch (TaskCanceledException ex)
-        {
-            _logger.LogError(ex, "Relay remove-member request timed out for room {RoomCode}", roomCode);
-            return RoomOperationResult.Failed(TimeoutError());
-        }
-        catch (HttpRequestException ex)
-        {
-            _logger.LogError(ex, "Relay remove-member network error for room {RoomCode}", roomCode);
-            return RoomOperationResult.Failed(NetworkError());
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogError(ex, "Relay remove-member deserialization error for room {RoomCode}", roomCode);
             return RoomOperationResult.Failed(DeserializationError());
         }
-        catch (RelayConfigurationException ex)
+
+        if (response.IsSuccessStatusCode && payload.Success)
         {
-            _logger.LogError(ex, "Relay remove-member configuration error for room {RoomCode}", roomCode);
-            return RoomOperationResult.Failed(ConfigurationError());
+            _logger.LogInformation(
+                "Removed device session {DeviceSessionId} from relay room {RoomCode}",
+                deviceSessionId,
+                roomCode);
+            return RoomOperationResult.Succeeded();
         }
+
+        return RoomOperationResult.Failed(MapHubError(payload.Error, response.StatusCode));
     }
 
     public async Task<RelayClientError?> Health(
         CancellationToken cancellationToken = default,
         RelayClientOptions? options = null)
     {
-        try
-        {
-            _logger.LogInformation(
-                "Checking relay hub health");
+        _logger.LogInformation(
+            "Checking relay hub health");
 
-            using var request = await CreateRequest(
-                HttpMethod.Get,
-                "health",
-                sessionToken: null,
-                options);
+        return await ExecuteAsync(
+            ct => HealthCore(options, ct),
+            error => (RelayClientError?)error,
+            "hub health check",
+            cancellationToken);
+    }
 
-            using var response = await _httpClient.SendAsync(request, cancellationToken);
+    private async Task<RelayClientError?> HealthCore(
+        RelayClientOptions? options,
+        CancellationToken cancellationToken)
+    {
+        using var request = await CreateRequest(
+            HttpMethod.Get,
+            "health",
+            sessionToken: null,
+            options);
 
-            if (response.IsSuccessStatusCode)
-            {
-                _logger.LogInformation("Relay hub health check succeeded");
-                return null;
-            }
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
 
-            return MapHubError(null, response.StatusCode);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        if (response.IsSuccessStatusCode)
         {
-            throw;
+            _logger.LogInformation("Relay hub health check succeeded");
+            return null;
         }
-        catch (TaskCanceledException ex)
-        {
-            _logger.LogError(ex, "Relay hub health check timed out");
-            return TimeoutError();
-        }
-        catch (HttpRequestException ex)
-        {
-            _logger.LogError(ex, "Relay hub health check network error");
-            return NetworkError();
-        }
-        catch (RelayConfigurationException ex)
-        {
-            _logger.LogError(ex, "Relay hub health check configuration error");
-            return ConfigurationError();
-        }
+
+        return MapHubError(null, response.StatusCode);
     }
 
     private async Task<RoomOperationResult> SendAckAsync(
@@ -350,39 +295,63 @@ public sealed class RelayRoomClient : IRelayRoomClient
         CancellationToken cancellationToken,
         RelayClientOptions? options)
     {
-        try
+        _logger.LogInformation(
+            "Sending {Method} for relay room {RoomCode}",
+            method.Method,
+            roomCode);
+
+        return await ExecuteAsync(
+            ct => SendAckCore(method, relativePath, roomCode, sessionToken, options, ct),
+            RoomOperationResult.Failed,
+            $"send {method.Method}",
+            cancellationToken);
+    }
+
+    private async Task<RoomOperationResult> SendAckCore(
+        HttpMethod method,
+        string relativePath,
+        string roomCode,
+        string sessionToken,
+        RelayClientOptions? options,
+        CancellationToken cancellationToken)
+    {
+        using var request = await CreateRequest(method, relativePath, sessionToken, options);
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (TryMapSpecialStatus(response.StatusCode, body, out var specialError))
+        {
+            return RoomOperationResult.Failed(specialError);
+        }
+
+        // Ready and Close share the same Success/Error shape.
+        var payload = DeserializeOrNull<ReadyResponse>(body);
+        if (payload is null)
+        {
+            return RoomOperationResult.Failed(DeserializationError());
+        }
+
+        if (response.IsSuccessStatusCode && payload.Success)
         {
             _logger.LogInformation(
-                "Sending {Method} for relay room {RoomCode}",
-                method.Method,
-                roomCode);
+                "Relay room {RoomCode} {Method} succeeded",
+                roomCode,
+                method.Method);
+            return RoomOperationResult.Succeeded();
+        }
 
-            using var request = await CreateRequest(method, relativePath, sessionToken, options);
-            using var response = await _httpClient.SendAsync(request, cancellationToken);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        return RoomOperationResult.Failed(MapHubError(payload.Error, response.StatusCode));
+    }
 
-            if (TryMapSpecialStatus(response.StatusCode, body, out var specialError))
-            {
-                return RoomOperationResult.Failed(specialError);
-            }
-
-            // Ready and Close share the same Success/Error shape.
-            var payload = DeserializeOrNull<ReadyResponse>(body);
-            if (payload is null)
-            {
-                return RoomOperationResult.Failed(DeserializationError());
-            }
-
-            if (response.IsSuccessStatusCode && payload.Success)
-            {
-                _logger.LogInformation(
-                    "Relay room {RoomCode} {Method} succeeded",
-                    roomCode,
-                    method.Method);
-                return RoomOperationResult.Succeeded();
-            }
-
-            return RoomOperationResult.Failed(MapHubError(payload.Error, response.StatusCode));
+    private async Task<TResult> ExecuteAsync<TResult>(
+        Func<CancellationToken, Task<TResult>> operation,
+        Func<RelayClientError, TResult> mapError,
+        string operationName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await operation(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -390,23 +359,28 @@ public sealed class RelayRoomClient : IRelayRoomClient
         }
         catch (TaskCanceledException ex)
         {
-            _logger.LogError(ex, "Relay {Method} request timed out for room {RoomCode}", method.Method, roomCode);
-            return RoomOperationResult.Failed(TimeoutError());
+            _logger.LogError(ex, "Relay {Operation} request timed out", operationName);
+            return mapError(TimeoutError());
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Relay {Method} network error for room {RoomCode}", method.Method, roomCode);
-            return RoomOperationResult.Failed(NetworkError());
+            _logger.LogError(ex, "Relay {Operation} network error", operationName);
+            return mapError(NetworkError());
         }
         catch (JsonException ex)
         {
-            _logger.LogError(ex, "Relay {Method} deserialization error for room {RoomCode}", method.Method, roomCode);
-            return RoomOperationResult.Failed(DeserializationError());
+            _logger.LogError(ex, "Relay {Operation} deserialization error", operationName);
+            return mapError(DeserializationError());
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogError(ex, "Relay {Operation} configuration error", operationName);
+            return mapError(ConfigurationError());
         }
         catch (RelayConfigurationException ex)
         {
-            _logger.LogError(ex, "Relay {Method} configuration error for room {RoomCode}", method.Method, roomCode);
-            return RoomOperationResult.Failed(ConfigurationError());
+            _logger.LogError(ex, "Relay {Operation} configuration error", operationName);
+            return mapError(ConfigurationError());
         }
     }
 

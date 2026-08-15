@@ -144,6 +144,42 @@ public class RelayRoomClientTests
         AssertNoSecretsLeaked(result.Error?.Message);
     }
 
+    [Fact]
+    public async Task JoinAsync_WhenOptionsProvided_UsesPinnedOptionsWithoutConsultingProvider()
+    {
+        // Arrange
+        var provider = Substitute.For<IRelayHubConfigurationProvider>();
+        var client = new RelayRoomClient(new HttpClient(_handler), provider, _logger);
+        _handler.StatusCode = HttpStatusCode.OK;
+        _handler.ResponseContent = """
+            {
+              "success": true,
+              "role": "Client",
+              "deviceSessionId": "22222222-2222-2222-2222-222222222222",
+              "hostGameId": "11111111-1111-1111-1111-111111111111",
+              "sessionToken": "test-session-token-secret-value",
+              "error": null
+            }
+            """;
+
+        // Act
+        var result = await client.Join(
+            "ABCDEF",
+            sessionToken: null,
+            options: new RelayClientOptions
+            {
+                BaseUrl = "https://pinned.example",
+                ApiKey = "pinned-key"
+            });
+
+        // Assert
+        result.Success.ShouldBeTrue();
+        _handler.LastRequest.ShouldNotBeNull();
+        _handler.LastRequest!.RequestUri!.ToString().ShouldBe("https://pinned.example/api/rooms/ABCDEF/join");
+        _handler.LastRequest.Headers.GetValues("X-Api-Key").Single().ShouldBe("pinned-key");
+        await provider.DidNotReceive().GetActiveOptions();
+    }
+
     [Theory]
     [InlineData("ready")]
     [InlineData("close")]
@@ -247,6 +283,87 @@ public class RelayRoomClientTests
         _handler.LastRequest.Headers.GetValues("X-Api-Key").Single().ShouldBe(ApiKey);
         _handler.LastRequest.Headers.GetValues("Session-Token").Single().ShouldBe(SessionToken);
         AssertNoSecretsLeaked(result.Error?.Message);
+    }
+
+    [Fact]
+    public async Task RemoveMemberAsync_UsesConfigurationValueActiveAtCallTime()
+    {
+        // Arrange
+        var deviceSessionId = Guid.Parse("55555555-5555-5555-5555-555555555555");
+        var provider = Substitute.For<IRelayHubConfigurationProvider>();
+        provider.GetActiveOptions().Returns(Task.FromResult(new RelayClientOptions
+        {
+            BaseUrl = "https://first.example",
+            ApiKey = "first-key"
+        }));
+        var client = new RelayRoomClient(new HttpClient(_handler), provider, _logger);
+
+        // Act - the created room uses the initial configuration
+        _handler.StatusCode = HttpStatusCode.Created;
+        _handler.ResponseContent = """
+            {
+              "success": true,
+              "roomCode": "ABCDEF",
+              "deviceSessionId": "99999999-9999-9999-9999-999999999999",
+              "hostGameId": "11111111-1111-1111-1111-111111111111",
+              "sessionToken": "test-session-token-secret-value",
+              "expiresAt": "2026-07-30T22:00:00Z",
+              "error": null
+            }
+            """;
+        var createResult = await client.Create(Guid.NewGuid());
+        createResult.Success.ShouldBeTrue();
+        _handler.LastRequest.ShouldNotBeNull();
+        _handler.LastRequest!.RequestUri!.ToString().ShouldBe("https://first.example/api/rooms");
+
+        // Update the configuration to a different successive value
+        provider.GetActiveOptions().Returns(Task.FromResult(new RelayClientOptions
+        {
+            BaseUrl = "https://second.example",
+            ApiKey = "second-key"
+        }));
+
+        // Act - RemoveMember must use the configured room hub
+        _handler.StatusCode = HttpStatusCode.OK;
+        _handler.ResponseContent = """{ "success": true, "error": null }""";
+        var result = await client.RemoveMember("ABCDEF", SessionToken, deviceSessionId);
+
+        // Assert
+        result.Success.ShouldBeTrue();
+        _handler.LastRequest.ShouldNotBeNull();
+        _handler.LastRequest!.RequestUri!.ToString()
+            .ShouldBe("https://second.example/api/rooms/ABCDEF/members/55555555-5555-5555-5555-555555555555");
+        _handler.LastRequest.Headers.GetValues("X-Api-Key").Single().ShouldBe("second-key");
+        AssertNoSecretsLeaked(result.Error?.Message);
+    }
+
+    [Fact]
+    public async Task RemoveMemberAsync_WhenOptionsProvided_UsesPinnedOptionsWithoutConsultingProvider()
+    {
+        // Arrange
+        var provider = Substitute.For<IRelayHubConfigurationProvider>();
+        var client = new RelayRoomClient(new HttpClient(_handler), provider, _logger);
+        _handler.StatusCode = HttpStatusCode.OK;
+        _handler.ResponseContent = """{ "success": true, "error": null }""";
+
+        // Act
+        var result = await client.RemoveMember(
+            "ABCDEF",
+            SessionToken,
+            Guid.NewGuid(),
+            options: new RelayClientOptions
+            {
+                BaseUrl = "https://pinned.example",
+                ApiKey = "pinned-key"
+            });
+
+        // Assert
+        result.Success.ShouldBeTrue();
+        _handler.LastRequest.ShouldNotBeNull();
+        _handler.LastRequest!.RequestUri!.ToString()
+            .ShouldStartWith("https://pinned.example/api/rooms/ABCDEF/members/");
+        _handler.LastRequest.Headers.GetValues("X-Api-Key").Single().ShouldBe("pinned-key");
+        await provider.DidNotReceive().GetActiveOptions();
     }
 
     [Theory]
@@ -585,6 +702,28 @@ public class RelayRoomClientTests
         _handler.LastRequest.ShouldNotBeNull();
         _handler.LastRequest!.RequestUri!.IsAbsoluteUri.ShouldBeTrue();
         _handler.LastRequest!.RequestUri!.ToString().ShouldBe("http://base.example/api/rooms");
+    }
+
+    [Fact]
+    public async Task CreateAsync_BlankBaseUrl_NoBaseAddress_MapsToConfigurationError()
+    {
+        // Arrange
+        var provider = Substitute.For<IRelayHubConfigurationProvider>();
+        provider.GetActiveOptions().Returns(Task.FromResult(new RelayClientOptions
+        {
+            BaseUrl = "   ",
+            ApiKey = ApiKey
+        }));
+        var client = new RelayRoomClient(new HttpClient(_handler), provider, _logger);
+
+        // Act
+        var result = await client.Create(Guid.NewGuid());
+
+        // Assert - a blank base URL with no HttpClient base address cannot escape as InvalidOperationException
+        result.Success.ShouldBeFalse();
+        result.Error.ShouldNotBeNull();
+        result.Error!.Code.ShouldBe(RelayClientErrorCode.ConfigurationError);
+        AssertNoSecretsLeaked(result.Error.Message);
     }
 
     [Fact]
@@ -955,7 +1094,7 @@ public class RelayRoomClientTests
     public async Task CreateAsync_HubErrorNull_MapsToUnknown()
     {
         _handler.StatusCode = HttpStatusCode.InternalServerError;
-        _handler.ResponseContent = """{ "success": false, "roomCode": null, "hostId": null, "sessionToken": null, "expiresAt": null, "error": null }""";
+        _handler.ResponseContent = """{ "success": false, "roomCode": null, "hostGameId": null, "sessionToken": null, "expiresAt": null, "error": null }""";
 
         var result = await _sut.Create(Guid.NewGuid());
 
@@ -968,7 +1107,7 @@ public class RelayRoomClientTests
     public async Task JoinAsync_HubErrorNull_MapsToUnknown()
     {
         _handler.StatusCode = HttpStatusCode.InternalServerError;
-        _handler.ResponseContent = """{ "success": false, "role": null, "playerId": null, "hostId": null, "sessionToken": null, "error": null }""";
+        _handler.ResponseContent = """{ "success": false, "role": null, "deviceSessionId": null, "hostGameId": null, "sessionToken": null, "error": null }""";
 
         var result = await _sut.Join("ABCDEF", sessionToken: null);
 
@@ -1062,7 +1201,7 @@ public class RelayRoomClientTests
     [Fact]
     public void CreateRoomResponse_Deserialization_ParsesExpiresAt()
     {
-        const string json = """{ "success": true, "roomCode": "ABCDEF", "hostId": "11111111-1111-1111-1111-111111111111", "sessionToken": "tok", "expiresAt": "2026-07-30T22:00:00Z", "error": null }""";
+        const string json = """{ "success": true, "roomCode": "ABCDEF", "hostGameId": "11111111-1111-1111-1111-111111111111", "sessionToken": "tok", "expiresAt": "2026-07-30T22:00:00Z", "error": null }""";
         var opts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true };
         opts.Converters.Add(new JsonStringEnumConverter());
         var response = JsonSerializer.Deserialize<CreateRoomResponse>(json, opts);
