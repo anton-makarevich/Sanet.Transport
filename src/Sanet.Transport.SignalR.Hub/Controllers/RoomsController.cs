@@ -286,6 +286,66 @@ public sealed class RoomsController(
         return new RemoveMemberResponse(Success: false, Error: new HubError(errorCode, message));
     }
 
+    [HttpPost("{roomCode}/relay-ticket")]
+    [ProducesResponseType<RelayTicketResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<RelayTicketResponse>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<RelayTicketResponse>(StatusCodes.Status409Conflict)]
+    public ActionResult<RelayTicketResponse> IssueRelayTicket(string roomCode)
+    {
+        if (!TryGetSessionToken(out var sessionToken))
+        {
+            logger.LogWarning(
+                "Relay-ticket request for room {RoomCode} rejected: Session-Token header is required",
+                roomCode);
+            return ValidationProblem(new ValidationProblemDetails(
+                new Dictionary<string, string[]>
+                {
+                    ["Session-Token"] = ["Session-Token header is required."]
+                }));
+        }
+
+        var result = roomManager.IssueRelayTicket(roomCode, sessionToken);
+
+        return result.Outcome switch
+        {
+            RelayTicketOutcome.Issued => Ok(LogTicketIssued(roomCode, result)),
+            RelayTicketOutcome.RoomExpired => Conflict(LogTicketFailure(result.Outcome, roomCode)),
+            _ => NotFound(LogTicketFailure(result.Outcome, roomCode))
+        };
+    }
+
+    private RelayTicketResponse LogTicketIssued(string roomCode, RelayTicketResult result)
+    {
+        logger.LogInformation(
+            "Relay-ticket request for room {RoomCode} succeeded; ticket expires {ExpiresAt}",
+            roomCode,
+            result.ExpiresAt);
+        return new RelayTicketResponse(
+            Success: true,
+            Ticket: result.Ticket,
+            ExpiresAt: result.ExpiresAt,
+            Error: null);
+    }
+
+    private RelayTicketResponse LogTicketFailure(RelayTicketOutcome outcome, string roomCode)
+    {
+        logger.LogWarning(
+            "Relay-ticket request for room {RoomCode} failed: {Outcome}",
+            roomCode,
+            outcome);
+        var (errorCode, message) = outcome switch
+        {
+            RelayTicketOutcome.RoomExpired => (HubErrorCode.RoomExpired, "The specified room has expired."),
+            _ => (HubErrorCode.RoomNotFound, "The specified room was not found.")
+        };
+        return new RelayTicketResponse(
+            Success: false,
+            Ticket: null,
+            ExpiresAt: null,
+            Error: new HubError(errorCode, message));
+    }
+
     private bool TryGetSessionToken(out string sessionToken)
     {
         sessionToken = string.Empty;

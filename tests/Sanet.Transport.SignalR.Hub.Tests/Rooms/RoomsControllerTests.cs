@@ -531,6 +531,108 @@ public class RoomsControllerTests
             message => message.Contains("succeeded: room", StringComparison.Ordinal));
     }
     
+    [Fact]
+    public void IssueRelayTicket_ValidRequest_ReturnsOk()
+    {
+        SetSessionTokenHeader(SessionToken);
+        var expiresAt = DateTimeOffset.UtcNow.AddSeconds(60);
+        _roomManager.IssueRelayTicket(RoomCode, SessionToken)
+            .Returns(RelayTicketResult.Issued("relay-ticket-abc", expiresAt));
+
+        var result = _sut.IssueRelayTicket(RoomCode);
+
+        _roomManager.Received(1).IssueRelayTicket(RoomCode, SessionToken);
+        var ok = result.Result.ShouldBeOfType<OkObjectResult>();
+        var response = ok.Value.ShouldBeOfType<RelayTicketResponse>();
+        response.Success.ShouldBeTrue();
+        response.Ticket.ShouldBe("relay-ticket-abc");
+        response.ExpiresAt.ShouldBe(expiresAt);
+        response.Error.ShouldBeNull();
+    }
+
+    [Fact]
+    public void IssueRelayTicket_MissingSessionToken_ReturnsValidationProblem()
+    {
+        var result = _sut.IssueRelayTicket(RoomCode);
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+        _roomManager.DidNotReceive().IssueRelayTicket(RoomCode, Arg.Any<string>());
+    }
+
+    [Fact]
+    public void IssueRelayTicket_RoomNotFound_ReturnsNotFound()
+    {
+        SetSessionTokenHeader(SessionToken);
+        _roomManager.IssueRelayTicket(RoomCode, SessionToken)
+            .Returns(RelayTicketResult.NotFound());
+
+        var result = _sut.IssueRelayTicket(RoomCode);
+
+        var notFound = result.Result.ShouldBeOfType<NotFoundObjectResult>();
+        var response = notFound.Value.ShouldBeOfType<RelayTicketResponse>();
+        response.Success.ShouldBeFalse();
+        response.Ticket.ShouldBeNull();
+        response.Error!.Code.ShouldBe(HubErrorCode.RoomNotFound);
+    }
+
+    [Fact]
+    public void IssueRelayTicket_RoomExpired_ReturnsConflict()
+    {
+        SetSessionTokenHeader(SessionToken);
+        _roomManager.IssueRelayTicket(RoomCode, SessionToken)
+            .Returns(RelayTicketResult.Expired());
+
+        var result = _sut.IssueRelayTicket(RoomCode);
+
+        var conflict = result.Result.ShouldBeOfType<ConflictObjectResult>();
+        var response = conflict.Value.ShouldBeOfType<RelayTicketResponse>();
+        response.Success.ShouldBeFalse();
+        response.Ticket.ShouldBeNull();
+        response.Error!.Code.ShouldBe(HubErrorCode.RoomExpired);
+    }
+
+    [Fact]
+    public void IssueRelayTicket_SessionInvalid_ReturnsNotFoundWithoutLeakingRoomExistence()
+    {
+        SetSessionTokenHeader(SessionToken);
+        _roomManager.IssueRelayTicket(RoomCode, SessionToken)
+            .Returns(RelayTicketResult.SessionInvalid());
+
+        var result = _sut.IssueRelayTicket(RoomCode);
+
+        var notFound = result.Result.ShouldBeOfType<NotFoundObjectResult>();
+        var response = notFound.Value.ShouldBeOfType<RelayTicketResponse>();
+        response.Success.ShouldBeFalse();
+        response.Ticket.ShouldBeNull();
+        response.Error!.Code.ShouldBe(HubErrorCode.RoomNotFound);
+    }
+
+    [Fact]
+    public void IssueRelayTicket_ValidRequest_LogsInformation()
+    {
+        SetSessionTokenHeader(SessionToken);
+        _roomManager.IssueRelayTicket(RoomCode, SessionToken)
+            .Returns(RelayTicketResult.Issued("relay-ticket-abc", DateTimeOffset.UtcNow.AddSeconds(60)));
+
+        _sut.IssueRelayTicket(RoomCode);
+
+        _logger.GetMessages(LogLevel.Information).ShouldContain(
+            message => message.Contains("succeeded", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void IssueRelayTicket_RoomNotFound_LogsWarning()
+    {
+        SetSessionTokenHeader(SessionToken);
+        _roomManager.IssueRelayTicket(RoomCode, SessionToken)
+            .Returns(RelayTicketResult.NotFound());
+
+        _sut.IssueRelayTicket(RoomCode);
+
+        _logger.GetMessages(LogLevel.Warning).ShouldContain(
+            message => message.Contains("failed: RoomNotFound", StringComparison.Ordinal));
+    }
+
     private void SetSessionTokenHeader(string token)
     {
         _sut.ControllerContext.HttpContext.Request.Headers["Session-Token"] = token;

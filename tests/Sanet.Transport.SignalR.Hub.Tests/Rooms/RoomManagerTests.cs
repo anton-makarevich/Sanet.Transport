@@ -12,6 +12,7 @@ public class RoomManagerTests
 {
     private const int DefaultRoomTtlSeconds = 7200;
     private const int DefaultDissolutionGracePeriodSeconds = 30;
+    private const int DefaultRelayTicketTtlSeconds = 60;
     [Fact]
     public void CreateRoom_CreatesHostDeviceSessionAndTwoHourExpiry()
     {
@@ -1092,6 +1093,184 @@ public class RoomManagerTests
 
     #endregion
 
+    #region Relay tickets
+
+    [Fact]
+    public void IssueRelayTicket_WithValidHostSession_IssuesTicketBoundToSession()
+    {
+        var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), now: now);
+        var creation = manager.CreateRoom(Guid.NewGuid());
+
+        var result = manager.IssueRelayTicket("ABC234", creation.Session!.Token);
+
+        result.Outcome.ShouldBe(RelayTicketOutcome.Issued);
+        string.IsNullOrWhiteSpace(result.Ticket).ShouldBeFalse();
+        result.Ticket.ShouldNotBe(creation.Session.Token);
+        result.ExpiresAt.ShouldBe(now.AddSeconds(DefaultRelayTicketTtlSeconds));
+
+        var session = manager.RedeemRelayTicket(result.Ticket!);
+        session.ShouldNotBeNull();
+        session!.RoomCode.ShouldBe("ABC234");
+        session.Token.ShouldBe(creation.Session.Token);
+    }
+
+    [Fact]
+    public void IssueRelayTicket_CustomTtl_RespectsConfiguredTtl()
+    {
+        var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), now: now, relayTicketTtlSeconds: 300);
+        var creation = manager.CreateRoom(Guid.NewGuid());
+
+        var result = manager.IssueRelayTicket("ABC234", creation.Session!.Token);
+
+        result.Outcome.ShouldBe(RelayTicketOutcome.Issued);
+        result.ExpiresAt.ShouldBe(now.AddSeconds(300));
+    }
+
+    [Fact]
+    public void IssueRelayTicket_RoomNotFound_ReturnsRoomNotFound()
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
+
+        var result = manager.IssueRelayTicket("NOEXIST", "some-token");
+
+        result.Outcome.ShouldBe(RelayTicketOutcome.RoomNotFound);
+        result.Ticket.ShouldBeNull();
+    }
+
+    [Fact]
+    public void IssueRelayTicket_RoomExpired_ReturnsRoomExpired()
+    {
+        var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new FixedTimeProvider(now);
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), timeProvider: timeProvider);
+        var creation = manager.CreateRoom(Guid.NewGuid());
+
+        timeProvider.Advance(TimeSpan.FromSeconds(DefaultRoomTtlSeconds).Add(TimeSpan.FromMinutes(1)));
+
+        var result = manager.IssueRelayTicket("ABC234", creation.Session!.Token);
+
+        result.Outcome.ShouldBe(RelayTicketOutcome.RoomExpired);
+        result.Ticket.ShouldBeNull();
+    }
+
+    [Fact]
+    public void IssueRelayTicket_WithUnknownSession_ReturnsSessionInvalid()
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
+        manager.CreateRoom(Guid.NewGuid());
+
+        var result = manager.IssueRelayTicket("ABC234", "no-such-session-token");
+
+        result.Outcome.ShouldBe(RelayTicketOutcome.SessionInvalid);
+        result.Ticket.ShouldBeNull();
+    }
+
+    [Fact]
+    public void IssueRelayTicket_WithSessionFromAnotherRoom_ReturnsSessionInvalid()
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234", "DEF567"));
+        var roomA = manager.CreateRoom(Guid.NewGuid());
+        manager.CreateRoom(Guid.NewGuid());
+
+        var result = manager.IssueRelayTicket("DEF567", roomA.Session!.Token);
+
+        result.Outcome.ShouldBe(RelayTicketOutcome.SessionInvalid);
+        result.Ticket.ShouldBeNull();
+    }
+
+    [Fact]
+    public void IssueRelayTicket_WithRevokedSession_ReturnsSessionInvalid()
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
+        var creation = manager.CreateRoom(Guid.NewGuid());
+        var hostSession = creation.Session!;
+        manager.MarkRoomReady("ABC234", hostSession.Token);
+        var joined = manager.JoinRoom("ABC234", sessionToken: null);
+        var clientSession = joined.Session!;
+        manager.RemoveMember("ABC234", hostSession.Token, clientSession.DeviceSessionId);
+
+        var result = manager.IssueRelayTicket("ABC234", clientSession.Token);
+
+        result.Outcome.ShouldBe(RelayTicketOutcome.SessionInvalid);
+        result.Ticket.ShouldBeNull();
+    }
+
+    [Fact]
+    public void RedeemRelayTicket_WithEmptyOrWhitespaceTicket_ReturnsNull()
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
+
+        manager.RedeemRelayTicket(null!).ShouldBeNull();
+        manager.RedeemRelayTicket(string.Empty).ShouldBeNull();
+        manager.RedeemRelayTicket("   ").ShouldBeNull();
+    }
+
+    [Fact]
+    public void RedeemRelayTicket_WithUnknownTicket_ReturnsNull()
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
+
+        var session = manager.RedeemRelayTicket("no-such-ticket");
+
+        session.ShouldBeNull();
+    }
+
+    [Fact]
+    public void RedeemRelayTicket_SameTicketTwiceWithinTtl_ResolvesBothTimes()
+    {
+        var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), now: now);
+        var creation = manager.CreateRoom(Guid.NewGuid());
+        var issued = manager.IssueRelayTicket("ABC234", creation.Session!.Token);
+        issued.Outcome.ShouldBe(RelayTicketOutcome.Issued);
+
+        var first = manager.RedeemRelayTicket(issued.Ticket!);
+        var second = manager.RedeemRelayTicket(issued.Ticket!);
+
+        first.ShouldNotBeNull();
+        second.ShouldNotBeNull();
+        second!.Token.ShouldBe(creation.Session.Token);
+    }
+
+    [Fact]
+    public void RedeemRelayTicket_AfterTicketExpiry_ReturnsNull()
+    {
+        var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new FixedTimeProvider(now);
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), timeProvider: timeProvider);
+        var creation = manager.CreateRoom(Guid.NewGuid());
+        var issued = manager.IssueRelayTicket("ABC234", creation.Session!.Token);
+        issued.Outcome.ShouldBe(RelayTicketOutcome.Issued);
+
+        timeProvider.Advance(TimeSpan.FromSeconds(DefaultRelayTicketTtlSeconds + 1));
+
+        var session = manager.RedeemRelayTicket(issued.Ticket!);
+
+        session.ShouldBeNull();
+    }
+
+    [Fact]
+    public void RedeemRelayTicket_AfterSessionRevoked_ReturnsNull()
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
+        var creation = manager.CreateRoom(Guid.NewGuid());
+        var hostSession = creation.Session!;
+        manager.MarkRoomReady("ABC234", hostSession.Token);
+        var joined = manager.JoinRoom("ABC234", sessionToken: null);
+        var clientSession = joined.Session!;
+        var issued = manager.IssueRelayTicket("ABC234", clientSession.Token);
+        issued.Outcome.ShouldBe(RelayTicketOutcome.Issued);
+        manager.RemoveMember("ABC234", hostSession.Token, clientSession.DeviceSessionId);
+
+        var session = manager.RedeemRelayTicket(issued.Ticket!);
+
+        session.ShouldBeNull();
+    }
+
+    #endregion
+
     private static RoomManager CreateManager(
         IRoomCodeGenerator roomCodeGenerator,
         int maxConcurrentRooms = 10,
@@ -1099,6 +1278,7 @@ public class RoomManagerTests
         FixedTimeProvider? timeProvider = null,
         int roomTtlSeconds = DefaultRoomTtlSeconds,
         int dissolutionGracePeriodSeconds = DefaultDissolutionGracePeriodSeconds,
+        int relayTicketTtlSeconds = DefaultRelayTicketTtlSeconds,
         ILogger<RoomManager>? logger = null) =>
         new(
             roomCodeGenerator,
@@ -1108,7 +1288,8 @@ public class RoomManagerTests
                 ApiKey = "test-api-key",
                 MaxConcurrentRooms = maxConcurrentRooms,
                 RoomTtlSeconds = roomTtlSeconds,
-                DissolutionGracePeriodSeconds = dissolutionGracePeriodSeconds
+                DissolutionGracePeriodSeconds = dissolutionGracePeriodSeconds,
+                RelayTicketTtlSeconds = relayTicketTtlSeconds
             }),
             logger ?? NullLogger<RoomManager>.Instance);
 

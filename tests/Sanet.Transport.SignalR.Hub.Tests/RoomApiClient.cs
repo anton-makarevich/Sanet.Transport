@@ -80,6 +80,20 @@ internal static class RoomApiClient
         return await client.SendAsync(request);
     }
 
+    public static async Task<HttpResponseMessage> RequestRelayTicketAsync(
+        HttpClient client,
+        string roomCode,
+        string sessionToken,
+        string? apiKey = HubApplicationFactory.ApiKey)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/rooms/{roomCode}/relay-ticket");
+        request.Headers.Add("Session-Token", sessionToken);
+        AddApiKey(request, apiKey);
+        return await client.SendAsync(request);
+    }
+
     private static void AddApiKey(HttpRequestMessage request, string? apiKey)
     {
         if (apiKey is not null)

@@ -1323,6 +1323,195 @@ public class RelayRoomClientTests
         await Should.ThrowAsync<OperationCanceledException>(() => _sut.Health(cts.Token));
     }
 
+    [Fact]
+    public async Task GetRelayTicket_Success_SendsSessionTokenHeader_AndReturnsTicket()
+    {
+        _handler.StatusCode = HttpStatusCode.OK;
+        _handler.ResponseContent = """
+            { "success": true, "ticket": "relay-ticket-123", "expiresAt": "2026-07-30T22:00:00Z", "error": null }
+            """;
+
+        var result = await _sut.GetRelayTicket("ABCDEF", SessionToken);
+
+        result.Success.ShouldBeTrue();
+        result.Ticket.ShouldBe("relay-ticket-123");
+        result.ExpiresAt.ShouldBe(new DateTimeOffset(2026, 7, 30, 22, 0, 0, TimeSpan.Zero));
+        result.Error.ShouldBeNull();
+        _handler.LastRequest.ShouldNotBeNull();
+        _handler.LastRequest!.Method.ShouldBe(HttpMethod.Post);
+        _handler.LastRequest.RequestUri!.ToString()
+            .ShouldBe($"{BaseUrl}/api/rooms/ABCDEF/relay-ticket");
+        _handler.LastRequest.Headers.GetValues("X-Api-Key").Single().ShouldBe(ApiKey);
+        _handler.LastRequest.Headers.GetValues("Session-Token").Single().ShouldBe(SessionToken);
+        AssertNoSecretsLeaked(result.Error?.Message);
+    }
+
+    [Fact]
+    public async Task GetRelayTicket_Success_DoesNotLogTicketValue()
+    {
+        const string ticketValue = "relay-ticket-secret-value";
+        _handler.StatusCode = HttpStatusCode.OK;
+        _handler.ResponseContent = $$"""
+            { "success": true, "ticket": "{{ticketValue}}", "expiresAt": "2026-07-30T22:00:00Z", "error": null }
+            """;
+
+        var result = await _sut.GetRelayTicket("ABCDEF", SessionToken);
+
+        result.Success.ShouldBeTrue();
+        result.Ticket.ShouldBe(ticketValue);
+        foreach (var call in _logger.ReceivedCalls())
+        {
+            var formatted = FormatLogCall(call);
+            formatted.ShouldNotContain(ticketValue);
+        }
+    }
+
+    [Fact]
+    public async Task GetRelayTicket_HubError_ReturnsErrorWithoutLeakingSecrets()
+    {
+        _handler.StatusCode = HttpStatusCode.Conflict;
+        _handler.ResponseContent = """
+            { "success": false, "ticket": null, "expiresAt": null,
+              "error": { "code": "RoomExpired", "message": "Room has expired" } }
+            """;
+
+        var result = await _sut.GetRelayTicket("ABCDEF", SessionToken);
+
+        result.Success.ShouldBeFalse();
+        result.Ticket.ShouldBeNull();
+        result.ExpiresAt.ShouldBeNull();
+        result.Error.ShouldNotBeNull();
+        result.Error!.Code.ShouldBe(RelayClientErrorCode.RoomExpired);
+        AssertNoSecretsLeaked(result.Error.Message);
+    }
+
+    [Fact]
+    public async Task GetRelayTicket_InvalidSession_ReturnsRoomNotFoundErrorWithoutLeaking()
+    {
+        _handler.StatusCode = HttpStatusCode.NotFound;
+        _handler.ResponseContent = """
+            { "success": false, "ticket": null, "expiresAt": null,
+              "error": { "code": "RoomNotFound", "message": "The room was not found." } }
+            """;
+
+        var result = await _sut.GetRelayTicket("ABCDEF", SessionToken);
+
+        result.Success.ShouldBeFalse();
+        result.Error.ShouldNotBeNull();
+        result.Error!.Code.ShouldBe(RelayClientErrorCode.RoomNotFound);
+        AssertNoSecretsLeaked(result.Error.Message);
+    }
+
+    [Fact]
+    public async Task GetRelayTicket_Unauthorized_ReturnsUnauthorizedError()
+    {
+        _handler.StatusCode = HttpStatusCode.Unauthorized;
+
+        var result = await _sut.GetRelayTicket("ABCDEF", SessionToken);
+
+        result.Success.ShouldBeFalse();
+        result.Error.ShouldNotBeNull();
+        result.Error!.Code.ShouldBe(RelayClientErrorCode.Unauthorized);
+        AssertNoSecretsLeaked(result.Error.Message);
+    }
+
+    [Fact]
+    public async Task GetRelayTicket_MalformedResponse_ReturnsDeserializationError()
+    {
+        _handler.StatusCode = HttpStatusCode.OK;
+        _handler.ResponseContent = "not-json";
+
+        var result = await _sut.GetRelayTicket("ABCDEF", SessionToken);
+
+        result.Success.ShouldBeFalse();
+        result.Error.ShouldNotBeNull();
+        result.Error!.Code.ShouldBe(RelayClientErrorCode.DeserializationError);
+        AssertNoSecretsLeaked(result.Error.Message);
+    }
+
+    [Fact]
+    public async Task GetRelayTicket_NetworkFailure_ReturnsError()
+    {
+        _handler.ThrowException = new HttpRequestException("connection refused");
+
+        var result = await _sut.GetRelayTicket("ABCDEF", SessionToken);
+
+        result.Success.ShouldBeFalse();
+        result.Error.ShouldNotBeNull();
+        result.Error!.Code.ShouldBe(RelayClientErrorCode.NetworkError);
+        AssertNoSecretsLeaked(result.Error.Message);
+    }
+
+    [Fact]
+    public async Task GetRelayTicket_Timeout_ReturnsError()
+    {
+        _handler.ThrowException = new TaskCanceledException("timed out");
+
+        var result = await _sut.GetRelayTicket("ABCDEF", SessionToken);
+
+        result.Success.ShouldBeFalse();
+        result.Error.ShouldNotBeNull();
+        result.Error!.Code.ShouldBe(RelayClientErrorCode.Timeout);
+        AssertNoSecretsLeaked(result.Error.Message);
+    }
+
+    [Fact]
+    public async Task GetRelayTicket_MalformedBaseUrl_ReturnsConfigurationError()
+    {
+        var provider = Substitute.For<IRelayHubConfigurationProvider>();
+        provider.GetActiveOptions().Returns(Task.FromResult(new RelayClientOptions
+        {
+            BaseUrl = "not a valid url",
+            ApiKey = ApiKey
+        }));
+        var client = new RelayRoomClient(new HttpClient(_handler), provider, _logger);
+
+        var result = await client.GetRelayTicket("ABCDEF", SessionToken);
+
+        result.Success.ShouldBeFalse();
+        result.Error.ShouldNotBeNull();
+        result.Error!.Code.ShouldBe(RelayClientErrorCode.ConfigurationError);
+        AssertNoSecretsLeaked(result.Error.Message);
+    }
+
+    [Fact]
+    public async Task GetRelayTicket_WhenOptionsProvided_PinsOptionsWithoutConsultingProvider()
+    {
+        var provider = Substitute.For<IRelayHubConfigurationProvider>();
+        var client = new RelayRoomClient(new HttpClient(_handler), provider, _logger);
+        _handler.StatusCode = HttpStatusCode.OK;
+        _handler.ResponseContent = """
+            { "success": true, "ticket": "pinned-ticket", "expiresAt": "2026-07-30T22:00:00Z", "error": null }
+            """;
+
+        var result = await client.GetRelayTicket(
+            "ABCDEF",
+            SessionToken,
+            options: new RelayClientOptions
+            {
+                BaseUrl = "https://pinned.example",
+                ApiKey = "pinned-key"
+            });
+
+        result.Success.ShouldBeTrue();
+        result.Ticket.ShouldBe("pinned-ticket");
+        _handler.LastRequest.ShouldNotBeNull();
+        _handler.LastRequest!.RequestUri!.ToString()
+            .ShouldBe("https://pinned.example/api/rooms/ABCDEF/relay-ticket");
+        _handler.LastRequest.Headers.GetValues("X-Api-Key").Single().ShouldBe("pinned-key");
+        await provider.DidNotReceive().GetActiveOptions();
+    }
+
+    [Fact]
+    public async Task GetRelayTicket_OperationCanceled_Rethrows()
+    {
+        var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Should.ThrowAsync<OperationCanceledException>(
+            () => _sut.GetRelayTicket("ABCDEF", SessionToken, cts.Token));
+    }
+
     private void AssertNoSecretsLeaked(string? errorMessage)
     {
         if (errorMessage is not null)

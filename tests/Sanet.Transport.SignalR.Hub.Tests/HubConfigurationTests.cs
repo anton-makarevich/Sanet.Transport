@@ -48,6 +48,7 @@ public class HubConfigurationTests
 
         options.RoomTtlSeconds.ShouldBe(7200);
         options.DissolutionGracePeriodSeconds.ShouldBe(30);
+        options.RelayTicketTtlSeconds.ShouldBe(60);
         options.MaxConcurrentRooms.ShouldBe(100);
         options.JoinRateLimitPerMinute.ShouldBe(10);
         options.RelayRateLimitPerMinute.ShouldBe(120);
@@ -145,6 +146,32 @@ public class HubConfigurationTests
         });
 
         ex.Message.ShouldContain("RoomTtlSeconds");
+    }
+
+    [Fact]
+    public void InvalidRelayTicketTtlSeconds_Zero_FailsStartupValidation()
+    {
+        var factory = new HubApplicationFactory(relayTicketTtlSeconds: 0);
+
+        var ex = Should.Throw<OptionsValidationException>(() =>
+        {
+            factory.CreateClient();
+        });
+
+        ex.Message.ShouldContain("RelayTicketTtlSeconds");
+    }
+
+    [Fact]
+    public void InvalidRelayTicketTtlSeconds_Negative_FailsStartupValidation()
+    {
+        var factory = new HubApplicationFactory(relayTicketTtlSeconds: -5);
+
+        var ex = Should.Throw<OptionsValidationException>(() =>
+        {
+            factory.CreateClient();
+        });
+
+        ex.Message.ShouldContain("RelayTicketTtlSeconds");
     }
 
     [Fact]
@@ -311,16 +338,16 @@ public class HubConfigurationTests
     }
 
     [Fact]
-    public async Task RelayAuthenticationMiddleware_DoesNotLogSessionToken()
+    public async Task RelayAuthenticationMiddleware_DoesNotLogRelayTicket()
     {
         var logger = new CapturingLogger<RelayAuthenticationMiddleware>();
         await using var factory = new HubApplicationFactory(relayAuthenticationLogger: logger);
         using var client = factory.CreateClient();
 
-        const string suppliedSessionToken = "distinctive-invalid-session-token";
+        const string suppliedTicket = "distinctive-invalid-relay-ticket";
         var url = HubApplicationFactory.BuildRelayHubUrl(
             client.BaseAddress!.ToString(),
-            suppliedSessionToken);
+            suppliedTicket);
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
 
         using var response = await client.SendAsync(request);
@@ -328,12 +355,12 @@ public class HubConfigurationTests
         response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
         var body = await response.Content.ReadAsStringAsync();
         body.ShouldNotContain(HubApplicationFactory.ApiKey);
-        body.ShouldNotContain(suppliedSessionToken);
+        body.ShouldNotContain(suppliedTicket);
 
         logger.GetMessages(LogLevel.Warning).ShouldContain(
-            message => message.Contains("session token not recognized", StringComparison.Ordinal));
+            message => message.Contains("relay ticket not recognized", StringComparison.Ordinal));
         logger.GetMessages(LogLevel.Warning).ShouldNotContain(
-            message => message.Contains(suppliedSessionToken, StringComparison.Ordinal));
+            message => message.Contains(suppliedTicket, StringComparison.Ordinal));
     }
     
     private static async Task<HttpResponseMessage> CreateRoomAsync(

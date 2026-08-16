@@ -9,6 +9,7 @@ public sealed class Room
     private readonly Dictionary<Guid, RoomMember> _members;
     private readonly Dictionary<string, RoomSession> _sessions;
     private readonly Dictionary<Guid, string> _connections = new();
+    private readonly Dictionary<string, (RoomSession Session, DateTimeOffset ExpiresAt)> _relayTickets = new(StringComparer.Ordinal);
 
     internal Room(
         string roomCode,
@@ -92,6 +93,47 @@ public sealed class Room
     internal bool HasSession(string token) => _sessions.ContainsKey(token);
 
     internal IReadOnlyCollection<string> SessionTokens => _sessions.Keys;
+
+    /// <summary>
+    /// Binds a short-lived relay ticket to a live session so the SignalR hub can
+    /// authenticate without exposing the session token. Returns false when the session
+    /// is unknown or already expired. The ticket remains resolvable (repeatable) until
+    /// its expiry so reconnects within the ticket window succeed.
+    /// </summary>
+    internal bool IssueRelayTicket(string sessionToken, string ticket, DateTimeOffset now, TimeSpan ttl)
+    {
+        if (!_sessions.TryGetValue(sessionToken, out var session) || session.ExpiresAt <= now)
+        {
+            return false;
+        }
+
+        _relayTickets[ticket] = (session, now.Add(ttl));
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves a relay ticket to its bound session while the ticket is unexpired, the room is
+    /// not yet expired/dissolved, and the bound session is still live (not revoked or expired).
+    /// </summary>
+    internal bool TryResolveRelayTicket(string ticket, DateTimeOffset now, out RoomSession session)
+    {
+        if (IsExpiredAt(now)
+            || !_relayTickets.TryGetValue(ticket, out var entry)
+            || entry.ExpiresAt <= now)
+        {
+            session = null!;
+            return false;
+        }
+
+        if (_sessions.TryGetValue(entry.Session.Token, out var liveSession) && liveSession.ExpiresAt > now)
+        {
+            session = liveSession;
+            return true;
+        }
+
+        session = null!;
+        return false;
+    }
 
     internal bool TryGetSession(string token, out RoomSession session) =>
         _sessions.TryGetValue(token, out session!);

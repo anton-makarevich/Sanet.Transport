@@ -40,9 +40,9 @@ public class RelayRpcTests
         var joinerA = await JoinRoomAsync(client, roomA.RoomCode, sessionToken: null);
         var roomB = await CreateReadyHostAsync(client);
 
-        await using var hostA = factory.CreateRelayHubConnection(roomA.SessionToken);
-        await using var clientA = factory.CreateRelayHubConnection(joinerA.SessionToken!);
-        await using var hostB = factory.CreateRelayHubConnection(roomB.SessionToken);
+        await using var hostA = factory.CreateRelayHubConnection(roomA.Ticket);
+        await using var clientA = factory.CreateRelayHubConnection(joinerA.RelayTicket);
+        await using var hostB = factory.CreateRelayHubConnection(roomB.Ticket);
 
         var hostAReceived = new TaskCompletionSource<RelayEnvelope>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -87,8 +87,8 @@ public class RelayRpcTests
         var host = await CreateReadyHostAsync(client);
         var joiner = await JoinRoomAsync(client, host.RoomCode, sessionToken: null);
 
-        await using var hostConnection = factory.CreateRelayHubConnection(host.SessionToken);
-        await using var clientConnection = factory.CreateRelayHubConnection(joiner.SessionToken!);
+        await using var hostConnection = factory.CreateRelayHubConnection(host.Ticket);
+        await using var clientConnection = factory.CreateRelayHubConnection(joiner.RelayTicket);
 
         var received = new TaskCompletionSource<RelayEnvelope>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -125,8 +125,8 @@ public class RelayRpcTests
         var joinerA = await JoinRoomAsync(client, roomA.RoomCode, sessionToken: null);
         var roomB = await CreateReadyHostAsync(client);
 
-        await using var hostA = factory.CreateRelayHubConnection(roomA.SessionToken);
-        await using var clientA = factory.CreateRelayHubConnection(joinerA.SessionToken!);
+        await using var hostA = factory.CreateRelayHubConnection(roomA.Ticket);
+        await using var clientA = factory.CreateRelayHubConnection(joinerA.RelayTicket);
 
         var clientAReceived = new TaskCompletionSource<RelayEnvelope>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -144,6 +144,7 @@ public class RelayRpcTests
                 new RelayEnvelope("x", "should-not-deliver", "1.0.0", 1, DateTime.UtcNow)));
 
         exception.Message.ShouldNotContain(HubApplicationFactory.ApiKey);
+        exception.Message.ShouldNotContain(roomA.Ticket);
         exception.Message.ShouldNotContain(roomA.SessionToken);
 
         var delivered = await Task.WhenAny(clientAReceived.Task, Task.Delay(1000));
@@ -159,8 +160,8 @@ public class RelayRpcTests
         var host = await CreateReadyHostAsync(client);
         var joiner = await JoinRoomAsync(client, host.RoomCode, sessionToken: null);
 
-        await using var hostConnection = factory.CreateRelayHubConnection(host.SessionToken);
-        await using var clientConnection = factory.CreateRelayHubConnection(joiner.SessionToken!);
+        await using var hostConnection = factory.CreateRelayHubConnection(host.Ticket);
+        await using var clientConnection = factory.CreateRelayHubConnection(joiner.RelayTicket);
 
         var received = new TaskCompletionSource<RelayEnvelope>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -243,7 +244,7 @@ public class RelayRpcTests
 
         var host = await CreateReadyHostAsync(client);
 
-        await using var hostConnection = factory.CreateRelayHubConnection(host.SessionToken);
+        await using var hostConnection = factory.CreateRelayHubConnection(host.Ticket);
 
         await hostConnection.StartAsync();
 
@@ -265,8 +266,8 @@ public class RelayRpcTests
         var host = await CreateReadyHostAsync(client);
         var joiner = await JoinRoomAsync(client, host.RoomCode, sessionToken: null);
 
-        await using var hostConnection = factory.CreateRelayHubConnection(host.SessionToken);
-        await using var clientConnection = factory.CreateRelayHubConnection(joiner.SessionToken!);
+        await using var hostConnection = factory.CreateRelayHubConnection(host.Ticket);
+        await using var clientConnection = factory.CreateRelayHubConnection(joiner.RelayTicket);
 
         var receiveCount = 0;
         var thirdAttemptReceived = new TaskCompletionSource<RelayEnvelope>(
@@ -332,10 +333,12 @@ public class RelayRpcTests
         using var readyResponse = await MarkReadyAsync(client, created.RoomCode, created.SessionToken);
         readyResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
-        return new ReadyHost(created.RoomCode, created.SessionToken);
+        var ticket = await RequestRelayTicketAsync(client, created.RoomCode, created.SessionToken);
+
+        return new ReadyHost(created.RoomCode, created.SessionToken, ticket);
     }
 
-    private static async Task<JoinResponse> JoinRoomAsync(
+    private static async Task<JoinedRoom> JoinRoomAsync(
         HttpClient client,
         string roomCode,
         string? sessionToken)
@@ -351,7 +354,26 @@ public class RelayRpcTests
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         var result = await response.Content.ReadFromJsonAsync<JoinResponse>(JsonOptions);
         result.ShouldNotBeNull();
-        return result;
+        result.SessionToken.ShouldNotBeNull();
+        result.DeviceSessionId.ShouldNotBeNull();
+
+        var relayTicket = await RequestRelayTicketAsync(client, roomCode, result.SessionToken);
+
+        return new JoinedRoom(roomCode, result.SessionToken, result.DeviceSessionId.Value, relayTicket);
+    }
+
+    private static async Task<string> RequestRelayTicketAsync(
+        HttpClient client,
+        string roomCode,
+        string sessionToken)
+    {
+        using var ticketResponse = await RoomApiClient.RequestRelayTicketAsync(client, roomCode, sessionToken);
+        ticketResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var ticket = await ticketResponse.Content.ReadFromJsonAsync<RelayTicketResponse>(JsonOptions);
+        ticket.ShouldNotBeNull();
+        ticket.Success.ShouldBeTrue();
+        ticket.Ticket.ShouldNotBeNull();
+        return ticket.Ticket;
     }
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
@@ -385,7 +407,13 @@ public class RelayRpcTests
         return await client.SendAsync(request);
     }
 
-    private sealed record ReadyHost(string RoomCode, string SessionToken);
+    private sealed record ReadyHost(string RoomCode, string SessionToken, string Ticket);
+
+    private sealed record JoinedRoom(
+        string RoomCode,
+        string SessionToken,
+        Guid DeviceSessionId,
+        string RelayTicket);
 
     private class TestHubCallerContext : HubCallerContext
     {

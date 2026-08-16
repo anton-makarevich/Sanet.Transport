@@ -8,7 +8,8 @@ namespace Sanet.Transport.SignalR.Client.Publishers;
 
 /// <summary>
 /// Relay-specific implementation of <see cref="ITransportPublisher"/> using SignalR.
-/// Connects outbound to a cloud RelayHub using WebSockets and room session token authentication.
+/// Connects outbound to a cloud RelayHub using WebSockets and short-lived relay-ticket
+/// authentication.
 /// Subscriber callbacks and public events are dispatched via the <see cref="SynchronizationContext"/>
 /// active at construction time, if any. Consumers on UI frameworks (Avalonia, WPF, WinUI) should
 /// construct this publisher on the UI thread to receive callbacks without manual marshaling.
@@ -73,12 +74,12 @@ public class RelayClientPublisher : ITransportPublisher
     /// </summary>
     /// <param name="hubUrl">The base URL of the SignalR relay hub.</param>
     /// <param name="roomCode">The 6-character room code.</param>
-    /// <param name="sessionToken">The session token issued by the REST room join/create API.</param>
+    /// <param name="relayTicket">The short-lived relay ticket issued by the REST relay-ticket API.</param>
     /// <param name="logger">Logger</param>
     public RelayClientPublisher(
         string hubUrl,
         string roomCode,
-        string sessionToken,
+        string relayTicket,
         ILogger<RelayClientPublisher> logger)
     {
         _logger = logger;
@@ -94,15 +95,15 @@ public class RelayClientPublisher : ITransportPublisher
             throw new ArgumentException("Room code must be exactly 6 characters", nameof(roomCode));
         }
 
-        if (string.IsNullOrWhiteSpace(sessionToken))
+        if (string.IsNullOrWhiteSpace(relayTicket))
         {
-            throw new ArgumentException("Session token cannot be null or empty", nameof(sessionToken));
+            throw new ArgumentException("Relay ticket cannot be null or empty", nameof(relayTicket));
         }
 
         _roomCode = roomCode;
 
         _hubConnection = new HubConnectionBuilder()
-            .WithUrl(BuildConnectionUrl(hubUrl, sessionToken), options =>
+            .WithUrl(BuildConnectionUrl(hubUrl, relayTicket), options =>
             {
                 options.Transports = HttpTransportType.WebSockets;
                 options.SkipNegotiation = true;
@@ -121,15 +122,15 @@ public class RelayClientPublisher : ITransportPublisher
     }
 
     /// <summary>
-    /// Builds the SignalR hub connection URL, appending the session token as a query-string
-    /// parameter and replacing any sessionToken parameter already present in the hub URL.
+    /// Builds the SignalR hub connection URL, appending the relay ticket as a query-string
+    /// parameter and replacing any ticket parameter already present in the hub URL.
     /// </summary>
     /// <param name="hubUrl">The base URL of the SignalR relay hub.</param>
-    /// <param name="sessionToken">The session token issued by the REST room join/create API.</param>
-    internal static string BuildConnectionUrl(string hubUrl, string sessionToken)
+    /// <param name="relayTicket">The short-lived relay ticket issued by the REST relay-ticket API.</param>
+    internal static string BuildConnectionUrl(string hubUrl, string relayTicket)
     {
         var uriBuilder = new UriBuilder(hubUrl);
-        var queryToAppend = $"sessionToken={Uri.EscapeDataString(sessionToken)}";
+        var queryToAppend = $"ticket={Uri.EscapeDataString(relayTicket)}";
 
         if (string.IsNullOrEmpty(uriBuilder.Query) || uriBuilder.Query == "?")
         {
@@ -141,7 +142,7 @@ public class RelayClientPublisher : ITransportPublisher
                 .Split('&', StringSplitOptions.RemoveEmptyEntries)
                 .Where(pair => !pair
                     .Split('=', 2)[0]
-                    .Equals("sessionToken", StringComparison.OrdinalIgnoreCase));
+                    .Equals("ticket", StringComparison.OrdinalIgnoreCase));
 
             uriBuilder.Query = string.Join('&', existingQueryParameters.Append(queryToAppend));
         }
