@@ -4,6 +4,7 @@ using Xunit;
 
 namespace Sanet.Transport.SignalR.Tests.Infrastructure;
 
+[Collection("TransportHub")]
 public class TransportHubTests
 {
     [Fact]

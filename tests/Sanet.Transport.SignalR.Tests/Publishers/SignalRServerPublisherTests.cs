@@ -7,6 +7,7 @@ using Xunit;
 
 namespace Sanet.Transport.SignalR.Tests.Publishers;
 
+[Collection("TransportHub")]
 public class SignalRServerPublisherTests
 {
     [Fact]
