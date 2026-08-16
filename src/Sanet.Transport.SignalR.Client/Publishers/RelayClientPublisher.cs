@@ -10,8 +10,11 @@ namespace Sanet.Transport.SignalR.Client.Publishers;
 /// Relay-specific implementation of <see cref="ITransportPublisher"/> using SignalR.
 /// Connects outbound to a cloud RelayHub using WebSockets and short-lived relay-ticket
 /// authentication. The relay ticket is bound into the connection URL at construction
-/// time, so after a disconnect callers must request a fresh ticket and recreate this
-/// publisher; automatic reconnect is not supported.
+/// time. When <paramref name="relayTicketExpiresAt"/> is supplied, automatic reconnect is
+/// configured with a retry window that ends before the ticket expires, so repeatable
+/// unexpired tickets are reused after transient transport failures; otherwise a
+/// disconnect is terminal and callers must request a fresh ticket and recreate this
+/// publisher.
 /// Subscriber callbacks and public events are dispatched via the <see cref="SynchronizationContext"/>
 /// active at construction time, if any. Consumers on UI frameworks (Avalonia, WPF, WinUI) should
 /// construct this publisher on the UI thread to receive callbacks without manual marshaling.
@@ -78,11 +81,17 @@ public class RelayClientPublisher : ITransportPublisher
     /// <param name="roomCode">The 6-character room code.</param>
     /// <param name="relayTicket">The short-lived relay ticket issued by the REST relay-ticket API.</param>
     /// <param name="logger">Logger</param>
+    /// <param name="relayTicketExpiresAt">
+    /// When provided, enables automatic reconnect with a retry window that ends before this
+    /// expiry, reusing the repeatable ticket after transient transport failures. When null,
+    /// no automatic reconnect is configured.
+    /// </param>
     public RelayClientPublisher(
         string hubUrl,
         string roomCode,
         string relayTicket,
-        ILogger<RelayClientPublisher> logger)
+        ILogger<RelayClientPublisher> logger,
+        DateTimeOffset? relayTicketExpiresAt = null)
     {
         _logger = logger;
         _syncContext = SynchronizationContext.Current;
@@ -104,13 +113,19 @@ public class RelayClientPublisher : ITransportPublisher
 
         _roomCode = roomCode;
 
-        _hubConnection = new HubConnectionBuilder()
+        var builder = new HubConnectionBuilder()
             .WithUrl(BuildConnectionUrl(hubUrl, relayTicket), options =>
             {
                 options.Transports = HttpTransportType.WebSockets;
                 options.SkipNegotiation = true;
-            })
-            .Build();
+            });
+
+        if (relayTicketExpiresAt is { } expiresAt)
+        {
+            builder = builder.WithAutomaticReconnect(new RelayTicketExpiryRetryPolicy(expiresAt));
+        }
+
+        _hubConnection = builder.Build();
 
         _hubConnection.On<RelayEnvelope>("OnReceive", HandleEnvelopeReceived);
         _hubConnection.On<HubError>("OnError", HandleHubError);
@@ -381,10 +396,11 @@ public class RelayClientPublisher : ITransportPublisher
             _logger.LogInformation("Relay client connection closed");
         }
 
-        // Closed is terminal: automatic reconnect is intentionally not configured because
-        // relay tickets are short-lived and are bound into the hub URL at construction time.
-        // Reconnecting with the same ticket would fail authentication, so callers must
-        // obtain a fresh relay ticket and recreate the publisher after a disconnect.
+        // Closed is terminal: it fires when no retry window is configured (no ticket
+        // expiry was supplied), when the retry window ends before the relay ticket
+        // expires, or when the publisher is disposed. Reconnecting with an expired
+        // ticket would fail authentication, so callers must obtain a fresh relay
+        // ticket and recreate the publisher once Closed is raised.
         RaiseEvent(() => Closed?.Invoke(exception));
         return Task.CompletedTask;
     }

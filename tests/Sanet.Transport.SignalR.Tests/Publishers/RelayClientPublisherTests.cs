@@ -436,6 +436,93 @@ public class RelayClientPublisherTests
         url.ShouldBe("http://localhost:5000/relayhub?ticket=tok%2Ben%2F%3D");
     }
 
+    [Fact]
+    public void RelayTicketExpiryRetryPolicy_WhenTicketAlreadyExpired_ReturnsNull()
+    {
+        var policy = new RelayTicketExpiryRetryPolicy(DateTimeOffset.UtcNow.AddSeconds(-1));
+
+        policy.NextRetryDelay(CreateRetryContext(previousRetryCount: 0, elapsedTime: TimeSpan.Zero)).ShouldBeNull();
+    }
+
+    [Fact]
+    public void RelayTicketExpiryRetryPolicy_WhenRetryWindowExhaustedBeforeTicketExpiry_ReturnsNull()
+    {
+        var policy = new RelayTicketExpiryRetryPolicy(DateTimeOffset.UtcNow.AddSeconds(5), TimeSpan.FromSeconds(2));
+
+        // The reconnect window must end before the ticket expires: with a 3s elapsed
+        // window against a 5s ticket and 2s margin, no further retry may be attempted.
+        policy.NextRetryDelay(CreateRetryContext(previousRetryCount: 10, elapsedTime: TimeSpan.FromSeconds(3))).ShouldBeNull();
+    }
+
+    [Fact]
+    public void RelayTicketExpiryRetryPolicy_WhenNextDelayExceedsRemainingWindow_ReturnsNull()
+    {
+        var policy = new RelayTicketExpiryRetryPolicy(DateTimeOffset.UtcNow.AddSeconds(3.5), TimeSpan.FromSeconds(2));
+
+        // Only 1.5s fit before the margin; the 2s retry delay would overshoot, so stop.
+        policy.NextRetryDelay(CreateRetryContext(previousRetryCount: 1, elapsedTime: TimeSpan.Zero)).ShouldBeNull();
+    }
+
+    [Fact]
+    public void RelayTicketExpiryRetryPolicy_WithinTicketWindow_ReturnsBoundedRetryDelay()
+    {
+        var policy = new RelayTicketExpiryRetryPolicy(DateTimeOffset.UtcNow.AddSeconds(30), TimeSpan.FromSeconds(2));
+
+        policy.NextRetryDelay(CreateRetryContext(previousRetryCount: 0, elapsedTime: TimeSpan.Zero))
+            .ShouldBe(TimeSpan.Zero);
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenConnectionDropsInsideTicketWindow_ReconnectsAutomatically()
+    {
+        await using var host = await FlakyTestRelayHubHost.StartAsync(ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        await using var publisher = new RelayClientPublisher(
+            hubUrl,
+            ValidRoomCode,
+            ValidRelayTicket,
+            logger,
+            DateTimeOffset.UtcNow.AddSeconds(30));
+
+        var reconnected = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        publisher.Reconnected += _ => reconnected.TrySetResult(true);
+
+        await publisher.StartAsync();
+        publisher.IsConnected.ShouldBeTrue();
+
+        var completed = await Task.WhenAny(reconnected.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        completed.ShouldBe(reconnected.Task, "Expected automatic reconnect while the relay ticket is still valid");
+        publisher.IsConnected.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenConnectionDropsWithoutTicketExpiry_ClosesWithoutReconnecting()
+    {
+        await using var host = await FlakyTestRelayHubHost.StartAsync(ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        await using var publisher = new RelayClientPublisher(hubUrl, ValidRoomCode, ValidRelayTicket, logger);
+
+        var closed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        publisher.Closed += _ => closed.TrySetResult(true);
+
+        await publisher.StartAsync();
+        publisher.IsConnected.ShouldBeTrue();
+
+        var completed = await Task.WhenAny(closed.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        completed.ShouldBe(closed.Task, "Expected connection to close without automatic reconnect");
+    }
+
+    private static RetryContext CreateRetryContext(long previousRetryCount, TimeSpan elapsedTime) => new()
+    {
+        PreviousRetryCount = previousRetryCount,
+        ElapsedTime = elapsedTime,
+        RetryReason = null
+    };
+
     private sealed class TestSynchronizationContext(Action onPost) : SynchronizationContext
     {
         public override void Post(SendOrPostCallback d, object? state)
