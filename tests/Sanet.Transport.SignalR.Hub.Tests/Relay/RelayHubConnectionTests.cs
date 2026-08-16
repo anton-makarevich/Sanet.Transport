@@ -23,8 +23,8 @@ public class RelayHubConnectionTests
         var host = await CreateReadyHostAsync(client);
         var other = await CreateReadyHostAsync(client);
 
-        await using var hostConnection = factory.CreateRelayHubConnection(host.SessionToken);
-        await using var otherConnection = factory.CreateRelayHubConnection(other.SessionToken);
+        await using var hostConnection = factory.CreateRelayHubConnection(host.Ticket);
+        await using var otherConnection = factory.CreateRelayHubConnection(other.Ticket);
 
         var hostProbe = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var otherProbe = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -54,13 +54,13 @@ public class RelayHubConnectionTests
     }
 
     [Fact]
-    public async Task Connect_WithoutApiKey_IsAcceptedOnSessionTokenOnly()
+    public async Task Connect_WithoutApiKey_IsAcceptedOnRelayTicketOnly()
     {
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
         var host = await CreateReadyHostAsync(client);
 
-        await using var connection = factory.CreateRelayHubConnection(host.SessionToken);
+        await using var connection = factory.CreateRelayHubConnection(host.Ticket);
 
         await connection.StartAsync();
 
@@ -93,37 +93,105 @@ public class RelayHubConnectionTests
     [Theory]
     [InlineData(null)]
     [InlineData("")]
-    [InlineData("not-a-valid-session-token")]
-    public async Task Connect_WithMissingOrMalformedSessionToken_IsRejectedWithoutLeakingCredentials(
-        string? sessionToken)
+    [InlineData("not-a-valid-relay-ticket")]
+    public async Task Connect_WithMissingOrMalformedRelayTicket_IsRejectedWithoutLeakingCredentials(
+        string? relayTicket)
     {
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
-        using var response = await PostNegotiateAsync(client, sessionToken);
+        using var response = await PostNegotiateAsync(client, relayTicket);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
 
         var body = await response.Content.ReadAsStringAsync();
         body.ShouldBeEmpty();
         body.ShouldNotContain(HubApplicationFactory.ApiKey);
-        if (!string.IsNullOrEmpty(sessionToken))
+        if (!string.IsNullOrEmpty(relayTicket))
         {
-            body.ShouldNotContain(sessionToken);
+            body.ShouldNotContain(relayTicket);
         }
     }
 
     [Fact]
-    public async Task Connect_WithExpiredSessionToken_IsRejectedWithoutLeakingToken()
+    public async Task Connect_WithExpiredRelayTicket_IsRejectedWithoutLeakingTicket()
     {
         var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero));
         await using var factory = new HubApplicationFactory(timeProvider: timeProvider);
         using var client = factory.CreateClient();
         var host = await CreateReadyHostAsync(client);
 
-        timeProvider.Advance(TimeSpan.FromHours(2).Add(TimeSpan.FromMinutes(1)));
+        timeProvider.Advance(TimeSpan.FromMinutes(1));
 
-        using var response = await PostNegotiateAsync(client, host.SessionToken);
+        using var response = await PostNegotiateAsync(client, host.Ticket);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+
+        var body = await response.Content.ReadAsStringAsync();
+        body.ShouldBeEmpty();
+        body.ShouldNotContain(HubApplicationFactory.ApiKey);
+        body.ShouldNotContain(host.Ticket);
+        body.ShouldNotContain(host.SessionToken);
+    }
+
+    [Fact]
+    public async Task Connect_WithRevokedSessionTicket_IsRejectedWithoutLeakingTicket()
+    {
+        await using var factory = new HubApplicationFactory();
+        using var client = factory.CreateClient();
+
+        var host = await CreateReadyHostAsync(client);
+        var join = await JoinRoomAsync(client, host.RoomCode, sessionToken: null);
+
+        using var removeResponse = await RoomApiClient.RemoveMember(
+            client, host.RoomCode, join.DeviceSessionId, host.SessionToken);
+        removeResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        using var response = await PostNegotiateAsync(client, join.RelayTicket);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+
+        var body = await response.Content.ReadAsStringAsync();
+        body.ShouldBeEmpty();
+        body.ShouldNotContain(HubApplicationFactory.ApiKey);
+        body.ShouldNotContain(join.RelayTicket);
+        body.ShouldNotContain(join.SessionToken);
+    }
+
+    [Fact]
+    public async Task Connect_WithValidClosedRoomRelayTicket_IsAccepted()
+    {
+        await using var factory = new HubApplicationFactory();
+        using var client = factory.CreateClient();
+
+        var host = await CreateReadyHostAsync(client);
+
+        using var closeResponse = await RoomApiClient.CloseRoom(client, host.RoomCode, host.SessionToken);
+        closeResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        await using var connection = factory.CreateRelayHubConnection(host.Ticket);
+
+        await connection.StartAsync();
+
+        connection.State.ShouldBe(HubConnectionState.Connected);
+    }
+
+    [Fact]
+    public async Task Connect_WithSessionTokenInQueryString_IsRejectedBecauseRelayAuthenticatesByTicketOnly()
+    {
+        await using var factory = new HubApplicationFactory();
+        using var client = factory.CreateClient();
+
+        var host = await CreateReadyHostAsync(client);
+
+        var baseUri = new Uri(client.BaseAddress!.ToString());
+        var negotiateBuilder = new UriBuilder(new Uri(baseUri, RelayAuthenticationDefaults.HubPath))
+        {
+            Query = $"sessionToken={Uri.EscapeDataString(host.SessionToken)}&negotiateVersion=1"
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, negotiateBuilder.Uri);
+        using var response = await client.SendAsync(request);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
 
@@ -134,55 +202,13 @@ public class RelayHubConnectionTests
     }
 
     [Fact]
-    public async Task Connect_WithRevokedSessionToken_IsRejectedWithoutLeakingToken()
-    {
-        await using var factory = new HubApplicationFactory();
-        using var client = factory.CreateClient();
-
-        var host = await CreateReadyHostAsync(client);
-        var join = await JoinRoomAsync(client, host.RoomCode, sessionToken: null);
-        join.SessionToken.ShouldNotBeNull();
-
-        using var removeResponse = await RoomApiClient.RemoveMemberAsync(
-            client, host.RoomCode, join.DeviceSessionId!.Value, host.SessionToken);
-        removeResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
-
-        using var response = await PostNegotiateAsync(client, join.SessionToken);
-
-        response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
-
-        var body = await response.Content.ReadAsStringAsync();
-        body.ShouldBeEmpty();
-        body.ShouldNotContain(HubApplicationFactory.ApiKey);
-        body.ShouldNotContain(join.SessionToken!);
-    }
-
-    [Fact]
-    public async Task Connect_WithValidClosedRoomSessionToken_IsAccepted()
-    {
-        await using var factory = new HubApplicationFactory();
-        using var client = factory.CreateClient();
-
-        var host = await CreateReadyHostAsync(client);
-
-        using var closeResponse = await RoomApiClient.CloseRoomAsync(client, host.RoomCode, host.SessionToken);
-        closeResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
-
-        await using var connection = factory.CreateRelayHubConnection(host.SessionToken);
-
-        await connection.StartAsync();
-
-        connection.State.ShouldBe(HubConnectionState.Connected);
-    }
-
-    [Fact]
     public async Task Invoke_RoomLifecycleMethods_FailBecauseHubExposesNoManagementRpcs()
     {
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
         var host = await CreateReadyHostAsync(client);
 
-        await using var connection = factory.CreateRelayHubConnection(host.SessionToken);
+        await using var connection = factory.CreateRelayHubConnection(host.Ticket);
         await connection.StartAsync();
 
         foreach (var methodName in new[] { "CreateRoom", "JoinRoom", "MarkReady", "CloseRoom", "RemoveMember" })
@@ -191,12 +217,13 @@ public class RelayHubConnectionTests
                 async () => await connection.InvokeAsync(methodName));
             exception.Message.ShouldNotContain(HubApplicationFactory.ApiKey);
             exception.Message.ShouldNotContain(host.SessionToken);
+            exception.Message.ShouldNotContain(host.Ticket);
         }
     }
 
     private static async Task<ReadyHost> CreateReadyHostAsync(HttpClient client)
     {
-        using var createResponse = await RoomApiClient.CreateRoomAsync(client, Guid.NewGuid());
+        using var createResponse = await RoomApiClient.CreateRoom(client, Guid.NewGuid());
         createResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         created.ShouldNotBeNull();
@@ -204,36 +231,44 @@ public class RelayHubConnectionTests
         created.RoomCode.ShouldNotBeNull();
         created.SessionToken.ShouldNotBeNull();
 
-        using var readyResponse = await RoomApiClient.MarkReadyAsync(client, created.RoomCode, created.SessionToken);
+        using var readyResponse = await RoomApiClient.MarkReady(client, created.RoomCode, created.SessionToken);
         readyResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
-        return new ReadyHost(created.RoomCode, created.SessionToken);
+        var ticket = await RoomApiClient.RequestRelayTicket(client, created.RoomCode, created.SessionToken);
+
+        return new ReadyHost(created.RoomCode, created.SessionToken, ticket);
     }
 
-    private static async Task<JoinResponse> JoinRoomAsync(
+    private static async Task<JoinedMember> JoinRoomAsync(
         HttpClient client,
         string roomCode,
         string? sessionToken)
     {
-        using var response = await RoomApiClient.JoinRoomAsync(client, roomCode, sessionToken);
+        using var response = await RoomApiClient.JoinRoom(client, roomCode, sessionToken);
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         var result = await response.Content.ReadFromJsonAsync<JoinResponse>(RoomApiClient.JsonOptions);
         result.ShouldNotBeNull();
-        return result;
+        result.SessionToken.ShouldNotBeNull();
+        result.DeviceSessionId.ShouldNotBeNull();
+
+        var ticket = await RoomApiClient.RequestRelayTicket(client, roomCode, result.SessionToken);
+
+        return new JoinedMember(result.SessionToken, result.DeviceSessionId.Value, ticket);
     }
+
 
     private static async Task<HttpResponseMessage> PostNegotiateAsync(
         HttpClient client,
-        string? sessionToken)
+        string? relayTicket)
     {
         var baseUri = new Uri(client.BaseAddress!.ToString());
         var negotiateBuilder = new UriBuilder(new Uri(baseUri, RelayAuthenticationDefaults.HubPath));
         var queryParts = new List<string>();
 
-        if (sessionToken is not null)
+        if (relayTicket is not null)
         {
             queryParts.Add(
-                $"{ApiKeyAuthenticationDefaults.SessionTokenQueryParameterName}={Uri.EscapeDataString(sessionToken)}");
+                $"{ApiKeyAuthenticationDefaults.TicketQueryParameterName}={Uri.EscapeDataString(relayTicket)}");
         }
 
         queryParts.Add("negotiateVersion=1");
@@ -243,7 +278,9 @@ public class RelayHubConnectionTests
         return await client.SendAsync(request);
     }
 
-    private sealed record ReadyHost(string RoomCode, string SessionToken);
+    private sealed record ReadyHost(string RoomCode, string SessionToken, string Ticket);
+
+    private sealed record JoinedMember(string SessionToken, Guid DeviceSessionId, string RelayTicket);
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {

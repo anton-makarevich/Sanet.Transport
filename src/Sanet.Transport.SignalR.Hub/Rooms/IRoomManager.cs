@@ -24,4 +24,18 @@ public interface IRoomManager
     /// Returns null for missing, unknown, expired, revoked, dissolved, or room-mismatched tokens.
     /// </summary>
     RoomSession? AuthenticateSession(string sessionToken);
+
+    /// <summary>
+    /// Issues a short-lived relay ticket bound to the session identified by
+    /// <paramref name="sessionToken"/> in the room <paramref name="roomCode"/>.
+    /// The ticket authenticates SignalR hub connections without exposing the session token.
+    /// </summary>
+    RelayTicketResult IssueRelayTicket(string roomCode, string sessionToken);
+
+    /// <summary>
+    /// Resolves a relay ticket to its bound session. Returns null for unknown, expired,
+    /// revoked, or room-dissolved tickets. A ticket may be redeemed more than once while
+    /// unexpired so reconnects within the ticket window keep working.
+    /// </summary>
+    RoomSession? RedeemRelayTicket(string ticket);
 }

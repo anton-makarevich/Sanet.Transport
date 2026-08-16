@@ -46,6 +46,14 @@ public sealed class HubOptions
     public int DissolutionGracePeriodSeconds { get; init; } = 30;
 
     /// <summary>
+    /// Time-to-live in seconds for relay tickets minted via the REST relay-ticket endpoint.
+    /// A ticket is only needed at connection/negotiation time; once authenticated, a
+    /// connection stays authenticated for the room session. Reconnects within this window
+    /// re-present the same ticket and are accepted.
+    /// </summary>
+    public int RelayTicketTtlSeconds { get; init; } = 60;
+
+    /// <summary>
     /// Delay in seconds before the host is notified that a peer disconnected.
     /// A reconnect of the same device session within the delay cancels the
     /// notification. Zero reproduces immediate-notification behavior.

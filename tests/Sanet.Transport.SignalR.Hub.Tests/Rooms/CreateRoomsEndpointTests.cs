@@ -14,7 +14,7 @@ public class CreateRoomsEndpointTests
         using var client = factory.CreateClient();
         var hostGameId = Guid.NewGuid();
 
-        using var response = await RoomApiClient.CreateRoomAsync(client, hostGameId);
+        using var response = await RoomApiClient.CreateRoom(client, hostGameId);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Created);
 
@@ -38,8 +38,8 @@ public class CreateRoomsEndpointTests
         await using var factory = new HubApplicationFactory(maxConcurrentRooms: 1);
         using var client = factory.CreateClient();
 
-        using var firstResponse = await RoomApiClient.CreateRoomAsync(client, Guid.NewGuid());
-        using var secondResponse = await RoomApiClient.CreateRoomAsync(client, Guid.NewGuid());
+        using var firstResponse = await RoomApiClient.CreateRoom(client, Guid.NewGuid());
+        using var secondResponse = await RoomApiClient.CreateRoom(client, Guid.NewGuid());
 
         firstResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
         secondResponse.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
@@ -70,7 +70,7 @@ public class CreateRoomsEndpointTests
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
-        using var response = await RoomApiClient.CreateRoomAsync(client, Guid.Empty);
+        using var response = await RoomApiClient.CreateRoom(client, Guid.Empty);
 
         response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         var body = await response.Content.ReadAsStringAsync();
@@ -85,7 +85,7 @@ public class CreateRoomsEndpointTests
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
-        using var response = await RoomApiClient.CreateRoomAsync(client, Guid.NewGuid(), apiKey);
+        using var response = await RoomApiClient.CreateRoom(client, Guid.NewGuid(), apiKey);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
         var body = await response.Content.ReadAsStringAsync();

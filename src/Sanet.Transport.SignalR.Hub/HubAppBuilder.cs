@@ -71,6 +71,9 @@ public static class HubAppBuilder
                 o => o.DissolutionGracePeriodSeconds > 0,
                 $"{HubOptions.SectionName}:DissolutionGracePeriodSeconds must be greater than zero.")
             .Validate(
+                o => o.RelayTicketTtlSeconds > 0,
+                $"{HubOptions.SectionName}:RelayTicketTtlSeconds must be greater than zero.")
+            .Validate(
                 o => o.PeerDisconnectNotificationDelaySeconds >= 0,
                 $"{HubOptions.SectionName}:PeerDisconnectNotificationDelaySeconds must be greater than or equal to zero.")
             .Validate(

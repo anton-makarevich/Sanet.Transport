@@ -222,6 +222,182 @@ public class RoomTests
         room.ValidateMemberSession(client.Token, client.DeviceSessionId, expiredAt).ShouldBeFalse();
     }
 
+    [Fact]
+    public void IssueRelayTicket_WithLiveSession_StoresResolvableTicket()
+    {
+        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+
+        var issued = room.IssueRelayTicket("host-token", "ticket-1", DefaultNow, TimeSpan.FromSeconds(60));
+
+        issued.ShouldBeTrue();
+        room.TryResolveRelayTicket("ticket-1", DefaultNow, out var session).ShouldBeTrue();
+        session.Token.ShouldBe("host-token");
+    }
+
+    [Fact]
+    public void IssueRelayTicket_WithUnknownSession_ReturnsFalse()
+    {
+        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+
+        var issued = room.IssueRelayTicket("no-such-token", "ticket-1", DefaultNow, TimeSpan.FromSeconds(60));
+
+        issued.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IssueRelayTicket_WithExpiredSession_ReturnsFalse()
+    {
+        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+
+        var issued = room.IssueRelayTicket(
+            "host-token",
+            "ticket-1",
+            DefaultNow.AddHours(3),
+            TimeSpan.FromSeconds(60));
+
+        issued.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TryResolveRelayTicket_WithUnknownTicket_ReturnsFalse()
+    {
+        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+
+        room.TryResolveRelayTicket("no-such-ticket", DefaultNow, out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TryResolveRelayTicket_AfterTicketExpiry_ReturnsFalse()
+    {
+        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        room.IssueRelayTicket("host-token", "ticket-1", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+
+        room.TryResolveRelayTicket("ticket-1", DefaultNow.AddSeconds(61), out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TryResolveRelayTicket_BeforeTicketExpiry_ResolvesRepeatedly()
+    {
+        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        room.IssueRelayTicket("host-token", "ticket-1", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+
+        room.TryResolveRelayTicket("ticket-1", DefaultNow.AddSeconds(30), out _).ShouldBeTrue();
+        room.TryResolveRelayTicket("ticket-1", DefaultNow.AddSeconds(59), out _).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void TryResolveRelayTicket_AfterSessionRevoked_ReturnsFalse()
+    {
+        var clientDeviceSessionId = Guid.NewGuid();
+        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var client = room.AddClientMember(clientDeviceSessionId, DefaultNow, DefaultTtl, () => "client-token");
+        room.IssueRelayTicket(client.Token, "ticket-1", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+
+        room.RemoveMember(clientDeviceSessionId);
+
+        room.TryResolveRelayTicket("ticket-1", DefaultNow, out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TryResolveRelayTicket_WhenRoomExpired_ReturnsFalse()
+    {
+        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        room.IssueRelayTicket("host-token", "ticket-1", DefaultNow, TimeSpan.FromHours(5)).ShouldBeTrue();
+
+        room.TryResolveRelayTicket("ticket-1", DefaultNow.AddHours(3), out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IssueRelayTicket_WithExpiredTicketsPresent_PrunesThemBeforeIssuing()
+    {
+        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        room.IssueRelayTicket("host-token", "expired-ticket", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+        var later = DefaultNow.AddSeconds(61);
+
+        for (var i = 0; i < Room.MaxActiveRelayTickets; i++)
+        {
+            room.IssueRelayTicket("host-token", $"live-{i}", later, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+        }
+    }
+
+    [Fact]
+    public void TryResolveRelayTicket_RemovesExpiredTicketsAsLookupSideEffect()
+    {
+        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        room.IssueRelayTicket("host-token", "expired-ticket", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+        var later = DefaultNow.AddSeconds(61);
+
+        room.TryResolveRelayTicket("expired-ticket", later, out _).ShouldBeFalse();
+
+        for (var i = 0; i < Room.MaxActiveRelayTickets; i++)
+        {
+            room.IssueRelayTicket("host-token", $"live-{i}", later, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+        }
+    }
+
+    [Fact]
+    public void IssueRelayTicket_AtCapacityWithAllLiveTickets_ReturnsFalse()
+    {
+        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+
+        for (var i = 0; i < Room.MaxActiveRelayTickets; i++)
+        {
+            room.IssueRelayTicket("host-token", $"live-{i}", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+        }
+
+        room.IssueRelayTicket("host-token", "overflow", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IssueRelayTicket_AfterMemberRemoval_TicketsBoundToRevokedSessionsDoNotBlockIssuance()
+    {
+        var clientDeviceSessionId = Guid.NewGuid();
+        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var client = room.AddClientMember(clientDeviceSessionId, DefaultNow, DefaultTtl, () => "client-token");
+
+        for (var i = 0; i < Room.MaxActiveRelayTickets; i++)
+        {
+            room.IssueRelayTicket(client.Token, $"stale-{i}", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+        }
+
+        room.RemoveMember(clientDeviceSessionId);
+
+        var rejoined = room.AddClientMember(clientDeviceSessionId, DefaultNow, DefaultTtl, () => "client-token-2");
+        room.IssueRelayTicket(rejoined.Token, "fresh", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IssueRelayTicket_AfterRejoin_TicketsBoundToReplacedSessionsDoNotBlockIssuance()
+    {
+        var clientDeviceSessionId = Guid.NewGuid();
+        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var client = room.AddClientMember(clientDeviceSessionId, DefaultNow, DefaultTtl, () => "client-token-1");
+
+        for (var i = 0; i < Room.MaxActiveRelayTickets; i++)
+        {
+            room.IssueRelayTicket(client.Token, $"stale-{i}", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+        }
+
+        var rejoined = room.AddClientMember(clientDeviceSessionId, DefaultNow, DefaultTtl, () => "client-token-2");
+        room.IssueRelayTicket(rejoined.Token, "fresh", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IssueRelayTicket_CleanupPreservesValidTicketsForLiveSessions()
+    {
+        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        room.IssueRelayTicket("host-token", "ticket-1", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+        var client = room.AddClientMember(Guid.NewGuid(), DefaultNow, DefaultTtl, () => "client-token");
+        room.IssueRelayTicket(client.Token, "stale", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+
+        room.RemoveMember(client.DeviceSessionId);
+
+        room.IssueRelayTicket("host-token", "ticket-2", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+        room.TryResolveRelayTicket("ticket-1", DefaultNow, out var hostSession).ShouldBeTrue();
+        hostSession.Token.ShouldBe("host-token");
+        room.TryResolveRelayTicket("ticket-2", DefaultNow, out _).ShouldBeTrue();
+    }
+
     private static Room CreateRoom(Guid hostDeviceSessionId, Guid hostGameId)
     {
         var hostMember = new RoomMember(hostDeviceSessionId, RoomRole.Host, DefaultNow);

@@ -9,6 +9,7 @@ public sealed class Room
     private readonly Dictionary<Guid, RoomMember> _members;
     private readonly Dictionary<string, RoomSession> _sessions;
     private readonly Dictionary<Guid, string> _connections = new();
+    private readonly Dictionary<string, (RoomSession Session, DateTimeOffset ExpiresAt)> _relayTickets = new(StringComparer.Ordinal);
 
     internal Room(
         string roomCode,
@@ -92,6 +93,84 @@ public sealed class Room
     internal bool HasSession(string token) => _sessions.ContainsKey(token);
 
     internal IReadOnlyCollection<string> SessionTokens => _sessions.Keys;
+
+    /// <summary>
+    /// Maximum number of relay tickets a room may hold at once. Tickets that are expired
+    /// or bound to revoked, replaced, or otherwise non-current sessions are pruned on each
+    /// issuance or redemption, so this bound only ever rejects when many tickets remain
+    /// live at the same time. Valid repeatable tickets are never evicted.
+    /// </summary>
+    internal const int MaxActiveRelayTickets = 32;
+
+    /// <summary>
+    /// Binds a short-lived relay ticket to a live session so the SignalR hub can
+    /// authenticate without exposing the session token. Stale tickets — expired, or
+    /// bound to a revoked, replaced, or otherwise non-current session — are removed
+    /// first, and issuance is refused once <see cref="MaxActiveRelayTickets"/> live
+    /// tickets are held. Returns false when the session is unknown or already expired,
+    /// or when the ticket cap is reached. Tickets remain resolvable (repeatable) until
+    /// their expiry so reconnects within the ticket window succeed.
+    /// </summary>
+    internal bool IssueRelayTicket(string sessionToken, string ticket, DateTimeOffset now, TimeSpan ttl)
+    {
+        if (!_sessions.TryGetValue(sessionToken, out var session) || session.ExpiresAt <= now)
+        {
+            return false;
+        }
+
+        RemoveStaleRelayTickets(now);
+
+        if (_relayTickets.Count >= MaxActiveRelayTickets)
+        {
+            return false;
+        }
+
+        _relayTickets[ticket] = (session, now.Add(ttl));
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves a relay ticket to its bound session while the ticket is unexpired, the room is
+    /// not yet expired/dissolved, and the bound session is still live (not revoked or expired).
+    /// Stale tickets are removed as a side effect of the lookup.
+    /// </summary>
+    internal bool TryResolveRelayTicket(string ticket, DateTimeOffset now, out RoomSession session)
+    {
+        RemoveStaleRelayTickets(now);
+
+        if (IsExpiredAt(now)
+            || !_relayTickets.TryGetValue(ticket, out var entry)
+            || entry.ExpiresAt <= now)
+        {
+            session = null!;
+            return false;
+        }
+
+        if (_sessions.TryGetValue(entry.Session.Token, out var liveSession) && liveSession.ExpiresAt > now)
+        {
+            session = liveSession;
+            return true;
+        }
+
+        session = null!;
+        return false;
+    }
+
+    private void RemoveStaleRelayTickets(DateTimeOffset now)
+    {
+        var staleTickets = _relayTickets
+            .Where(entry =>
+                entry.Value.ExpiresAt <= now
+                || !_sessions.TryGetValue(entry.Value.Session.Token, out var session)
+                || session.ExpiresAt <= now)
+            .Select(entry => entry.Key)
+            .ToArray();
+
+        foreach (var staleTicket in staleTickets)
+        {
+            _relayTickets.Remove(staleTicket);
+        }
+    }
 
     internal bool TryGetSession(string token, out RoomSession session) =>
         _sessions.TryGetValue(token, out session!);

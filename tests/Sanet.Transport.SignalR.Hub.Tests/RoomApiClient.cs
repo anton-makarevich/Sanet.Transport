@@ -1,8 +1,10 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Sanet.Transport.SignalR.Hub.Contracts;
 using Sanet.Transport.SignalR.Hub.Security;
+using Shouldly;
 
 namespace Sanet.Transport.SignalR.Hub.Tests;
 
@@ -14,7 +16,7 @@ internal static class RoomApiClient
 {
     public static JsonSerializerOptions JsonOptions { get; } = CreateJsonOptions();
 
-    public static async Task<HttpResponseMessage> CreateRoomAsync(
+    public static async Task<HttpResponseMessage> CreateRoom(
         HttpClient client,
         Guid gameId,
         string? apiKey = HubApplicationFactory.ApiKey)
@@ -25,7 +27,7 @@ internal static class RoomApiClient
         return await client.SendAsync(request);
     }
 
-    public static async Task<HttpResponseMessage> JoinRoomAsync(
+    public static async Task<HttpResponseMessage> JoinRoom(
         HttpClient client,
         string roomCode,
         string? sessionToken,
@@ -41,7 +43,7 @@ internal static class RoomApiClient
         return await client.SendAsync(request);
     }
 
-    public static async Task<HttpResponseMessage> MarkReadyAsync(
+    public static async Task<HttpResponseMessage> MarkReady(
         HttpClient client,
         string roomCode,
         string sessionToken,
@@ -53,7 +55,7 @@ internal static class RoomApiClient
         return await client.SendAsync(request);
     }
 
-    public static async Task<HttpResponseMessage> CloseRoomAsync(
+    public static async Task<HttpResponseMessage> CloseRoom(
         HttpClient client,
         string roomCode,
         string sessionToken,
@@ -65,7 +67,7 @@ internal static class RoomApiClient
         return await client.SendAsync(request);
     }
 
-    public static async Task<HttpResponseMessage> RemoveMemberAsync(
+    public static async Task<HttpResponseMessage> RemoveMember(
         HttpClient client,
         string roomCode,
         Guid deviceSessionId,
@@ -78,6 +80,30 @@ internal static class RoomApiClient
         request.Headers.Add("Session-Token", sessionToken);
         AddApiKey(request, apiKey);
         return await client.SendAsync(request);
+    }
+
+    /// <summary>
+    /// Requests a relay ticket from <c>POST /api/rooms/{roomCode}/relay-ticket</c> and returns
+    /// the ticket value, asserting a successful response.
+    /// </summary>
+    public static async Task<string> RequestRelayTicket(
+        HttpClient client,
+        string roomCode,
+        string sessionToken,
+        string? apiKey = HubApplicationFactory.ApiKey)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/rooms/{roomCode}/relay-ticket");
+        request.Headers.Add("Session-Token", sessionToken);
+        AddApiKey(request, apiKey);
+        using var response = await client.SendAsync(request);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var ticket = await response.Content.ReadFromJsonAsync<RelayTicketResponse>(JsonOptions);
+        ticket.ShouldNotBeNull();
+        ticket.Success.ShouldBeTrue();
+        ticket.Ticket.ShouldNotBeNull();
+        return ticket.Ticket;
     }
 
     private static void AddApiKey(HttpRequestMessage request, string? apiKey)

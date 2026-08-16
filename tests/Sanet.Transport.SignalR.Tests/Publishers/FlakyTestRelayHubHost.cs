@@ -4,18 +4,31 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Sanet.Transport.SignalR.Tests.Factories;
+namespace Sanet.Transport.SignalR.Tests.Publishers;
 
 /// <summary>
-/// Hub that stands in for the remote relay hub while exercising the real
-/// SignalR WebSocket handshake, rejecting connections whose ticket query
-/// parameter does not match the configured relay ticket.
+/// Hub that accepts connections whose ticket query parameter matches the configured
+/// relay ticket, then aborts each connection shortly after it is established to force
+/// an unexpected transport drop on the client.
 /// </summary>
-public sealed class TestRelayHub : Hub
+public sealed class FlakyTestRelayHub : Hub
 {
+    public override Task OnConnectedAsync()
+    {
+        if (Context.GetHttpContext() is { } httpContext)
+        {
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(500));
+                httpContext.Abort();
+            });
+        }
+
+        return base.OnConnectedAsync();
+    }
 }
 
-internal static class TestRelayHubHost
+internal static class FlakyTestRelayHubHost
 {
     public static async Task<WebApplication> StartAsync(string requiredRelayTicket)
     {
@@ -34,7 +47,7 @@ internal static class TestRelayHubHost
 
             await next(context);
         });
-        app.MapHub<TestRelayHub>("/hubs/relay");
+        app.MapHub<FlakyTestRelayHub>("/hubs/relay");
         await app.StartAsync();
         return app;
     }

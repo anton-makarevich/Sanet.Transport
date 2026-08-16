@@ -21,6 +21,7 @@ public sealed class RoomManager : IRoomManager
     private readonly int _maxConcurrentRooms;
     private readonly TimeSpan _roomTtl;
     private readonly TimeSpan _dissolutionGracePeriod;
+    private readonly TimeSpan _relayTicketTtl;
     private readonly ILogger<RoomManager> _logger;
 
     public RoomManager(
@@ -36,6 +37,7 @@ public sealed class RoomManager : IRoomManager
         _maxConcurrentRooms = options.Value.MaxConcurrentRooms;
         _roomTtl = TimeSpan.FromSeconds(options.Value.RoomTtlSeconds);
         _dissolutionGracePeriod = TimeSpan.FromSeconds(options.Value.DissolutionGracePeriodSeconds);
+        _relayTicketTtl = TimeSpan.FromSeconds(options.Value.RelayTicketTtlSeconds);
         _logger = logger;
     }
 
@@ -552,6 +554,107 @@ public sealed class RoomManager : IRoomManager
                 session.Role);
 
             return session;
+        }
+    }
+
+    public RelayTicketResult IssueRelayTicket(string roomCode, string sessionToken)
+    {
+        if (string.IsNullOrWhiteSpace(sessionToken))
+        {
+            _logger.LogWarning(
+                "Relay-ticket request for room {RoomCode} rejected: session token missing or invalid",
+                roomCode);
+            return RelayTicketResult.SessionInvalid();
+        }
+
+        lock (_sync)
+        {
+            var now = _timeProvider.GetUtcNow();
+
+            if (!_rooms.TryGetValue(roomCode, out var room))
+            {
+                _logger.LogWarning(
+                    "Relay-ticket request rejected for room {RoomCode}: room not found",
+                    roomCode);
+                return RelayTicketResult.NotFound();
+            }
+
+            if (room.IsExpiredAt(now))
+            {
+                _logger.LogWarning(
+                    "Relay-ticket request rejected for room {RoomCode}: room expired",
+                    roomCode);
+                return RelayTicketResult.Expired();
+            }
+
+            // Terminal dissolution deadline: purge and reject.
+            if (room.IsDissolvedAt(now))
+            {
+                _logger.LogWarning(
+                    "Relay-ticket request rejected for room {RoomCode}: room dissolved",
+                    roomCode);
+                room.RevokeAllSessions();
+                SyncSessionIndex(room);
+                _rooms.Remove(roomCode);
+                return RelayTicketResult.NotFound();
+            }
+
+            if (!room.TryGetSession(sessionToken, out var session) || session.ExpiresAt <= now)
+            {
+                _logger.LogWarning(
+                    "Relay-ticket request rejected for room {RoomCode}: session token not recognized",
+                    roomCode);
+                return RelayTicketResult.SessionInvalid();
+            }
+
+            var ticket = GenerateSessionToken();
+            if (!room.IssueRelayTicket(sessionToken, ticket, now, _relayTicketTtl))
+            {
+                _logger.LogWarning(
+                    "Relay-ticket request rejected for room {RoomCode}: active-ticket limit reached",
+                    roomCode);
+                return RelayTicketResult.LimitReached();
+            }
+
+            _logger.LogInformation(
+                "Relay ticket issued for device session {DeviceSessionId} in room {RoomCode}; expires {ExpiresAt}",
+                session.DeviceSessionId,
+                roomCode,
+                now.Add(_relayTicketTtl));
+
+            return RelayTicketResult.Issued(ticket, now.Add(_relayTicketTtl));
+        }
+    }
+
+    public RoomSession? RedeemRelayTicket(string ticket)
+    {
+        if (string.IsNullOrWhiteSpace(ticket))
+        {
+            return null;
+        }
+
+        lock (_sync)
+        {
+            var now = _timeProvider.GetUtcNow();
+            RemoveExpiredRooms(now);
+
+            foreach (var room in _rooms.Values)
+            {
+                if (room.TryResolveRelayTicket(ticket, now, out var session))
+                {
+                    _logger.LogDebug(
+                        "Relay ticket redeemed for device session {DeviceSessionId} in room {RoomCode} as {Role}",
+                        session.DeviceSessionId,
+                        room.RoomCode,
+                        session.Role);
+
+                    return session;
+                }
+            }
+
+            _logger.LogWarning(
+                "Relay ticket rejected: no matching unexpired ticket found in any room");
+            return null;
         }
     }
 

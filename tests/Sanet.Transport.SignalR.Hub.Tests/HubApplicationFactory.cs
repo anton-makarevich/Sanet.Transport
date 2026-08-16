@@ -25,9 +25,11 @@ public sealed class HubApplicationFactory : IAsyncDisposable
     private readonly int _maxRelayPayloadBytes;
     private readonly int _roomTtlSeconds;
     private readonly int _dissolutionGracePeriodSeconds;
+    private readonly int _relayTicketTtlSeconds;
     private readonly int _peerDisconnectNotificationDelaySeconds;
     private readonly int _signalRKeepAliveIntervalSeconds;
     private readonly int _signalRClientTimeoutIntervalSeconds;
+    private readonly string[]? _trustedProxies;
     private readonly TimeProvider? _timeProvider;
     private readonly CapturingLogger<ApiKeyAuthenticationMiddleware>? _apiKeyAuthenticationLogger;
     private readonly CapturingLogger<RelayAuthenticationMiddleware>? _relayAuthenticationLogger;
@@ -44,9 +46,11 @@ public sealed class HubApplicationFactory : IAsyncDisposable
         int maxRelayPayloadBytes = 256 * 1024,
         int roomTtlSeconds = 7200,
         int dissolutionGracePeriodSeconds = 30,
+        int relayTicketTtlSeconds = 60,
         int peerDisconnectNotificationDelaySeconds = 5,
         int signalRKeepAliveIntervalSeconds = 86400,
         int signalRClientTimeoutIntervalSeconds = 172800,
+        string[]? trustedProxies = null,
         TimeProvider? timeProvider = null,
         CapturingLogger<ApiKeyAuthenticationMiddleware>? apiKeyAuthenticationLogger = null,
         CapturingLogger<RelayAuthenticationMiddleware>? relayAuthenticationLogger = null)
@@ -57,9 +61,11 @@ public sealed class HubApplicationFactory : IAsyncDisposable
         _maxRelayPayloadBytes = maxRelayPayloadBytes;
         _roomTtlSeconds = roomTtlSeconds;
         _dissolutionGracePeriodSeconds = dissolutionGracePeriodSeconds;
+        _relayTicketTtlSeconds = relayTicketTtlSeconds;
         _peerDisconnectNotificationDelaySeconds = peerDisconnectNotificationDelaySeconds;
         _signalRKeepAliveIntervalSeconds = signalRKeepAliveIntervalSeconds;
         _signalRClientTimeoutIntervalSeconds = signalRClientTimeoutIntervalSeconds;
+        _trustedProxies = trustedProxies;
         _timeProvider = timeProvider;
         _apiKeyAuthenticationLogger = apiKeyAuthenticationLogger;
         _relayAuthenticationLogger = relayAuthenticationLogger;
@@ -73,10 +79,10 @@ public sealed class HubApplicationFactory : IAsyncDisposable
         return new HttpClient { BaseAddress = new Uri(_baseAddress!) };
     }
 
-    public HubConnection CreateRelayHubConnection(string? sessionToken)
+    public HubConnection CreateRelayHubConnection(string? relayTicket)
     {
         _ = App;
-        var url = BuildRelayHubUrl(_baseAddress!, sessionToken);
+        var url = BuildRelayHubUrl(_baseAddress!, relayTicket);
 
         return new HubConnectionBuilder()
             .WithUrl(url, options =>
@@ -88,15 +94,15 @@ public sealed class HubApplicationFactory : IAsyncDisposable
             .Build();
     }
 
-    public static string BuildRelayHubUrl(string baseAddress, string? sessionToken)
+    public static string BuildRelayHubUrl(string baseAddress, string? relayTicket)
     {
         var builder = new UriBuilder(new Uri(new Uri(baseAddress), RelayAuthenticationDefaults.HubPath));
         var queryParts = new List<string>();
 
-        if (sessionToken is not null)
+        if (relayTicket is not null)
         {
             queryParts.Add(
-                $"{ApiKeyAuthenticationDefaults.SessionTokenQueryParameterName}={Uri.EscapeDataString(sessionToken)}");
+                $"{ApiKeyAuthenticationDefaults.TicketQueryParameterName}={Uri.EscapeDataString(relayTicket)}");
         }
 
         builder.Query = string.Join('&', queryParts);
@@ -167,10 +173,22 @@ public sealed class HubApplicationFactory : IAsyncDisposable
             ["Hub:MaxRelayPayloadBytes"] = _maxRelayPayloadBytes.ToString(),
             ["Hub:RoomTtlSeconds"] = _roomTtlSeconds.ToString(),
             ["Hub:DissolutionGracePeriodSeconds"] = _dissolutionGracePeriodSeconds.ToString(),
+            ["Hub:RelayTicketTtlSeconds"] = _relayTicketTtlSeconds.ToString(),
             ["Hub:PeerDisconnectNotificationDelaySeconds"] = _peerDisconnectNotificationDelaySeconds.ToString(),
             ["Hub:SignalR:KeepAliveIntervalSeconds"] = _signalRKeepAliveIntervalSeconds.ToString(),
             ["Hub:SignalR:ClientTimeoutIntervalSeconds"] = _signalRClientTimeoutIntervalSeconds.ToString()
         });
+
+        if (_trustedProxies is not null)
+        {
+            var proxyConfig = new Dictionary<string, string?>();
+            for (var i = 0; i < _trustedProxies.Length; i++)
+            {
+                proxyConfig[$"Hub:TrustedProxies:{i}"] = _trustedProxies[i];
+            }
+
+            builder.Configuration.AddInMemoryCollection(proxyConfig);
+        }
 
         builder.Services.PostConfigure<Microsoft.AspNetCore.SignalR.HubOptions>(options =>
         {

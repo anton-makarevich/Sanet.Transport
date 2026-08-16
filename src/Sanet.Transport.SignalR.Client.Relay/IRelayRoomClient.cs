@@ -6,10 +6,10 @@ namespace Sanet.Transport.SignalR.Client.Relay;
 /// no player identity is sent or received.
 /// </summary>
 /// <remarks>
-/// <see cref="Create"/>, <see cref="Join"/>, <see cref="Ready"/>, <see cref="Close"/> and
-/// <see cref="RemoveMember"/> accept an optional <see cref="RelayClientOptions"/> to pin a room
-/// lifecycle to the hub it was started on. When omitted, the currently active hub configuration
-/// is resolved for each request.
+/// <see cref="Create"/>, <see cref="Join"/>, <see cref="Ready"/>, <see cref="Close"/>,
+/// <see cref="RemoveMember"/> and <see cref="GetRelayTicket"/> accept an optional
+/// <see cref="RelayClientOptions"/> to pin a room lifecycle to the hub it was started on.
+/// When omitted, the currently active hub configuration is resolved for each request.
 /// </remarks>
 public interface IRelayRoomClient
 {
@@ -40,6 +40,17 @@ public interface IRelayRoomClient
         string roomCode,
         string sessionToken,
         Guid deviceSessionId,
+        CancellationToken cancellationToken = default,
+        RelayClientOptions? options = null);
+
+    /// <summary>
+    /// Requests a short-lived relay ticket for the given room session. The ticket is used to
+    /// authenticate the SignalR relay hub connection via the hub URL query string; the REST
+    /// session token must never appear in the URL.
+    /// </summary>
+    Task<RelayTicketResult> GetRelayTicket(
+        string roomCode,
+        string sessionToken,
         CancellationToken cancellationToken = default,
         RelayClientOptions? options = null);
 

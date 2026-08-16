@@ -4,11 +4,11 @@ using Sanet.Transport.SignalR.Hub.Rooms;
 namespace Sanet.Transport.SignalR.Hub.Security;
 
 /// <summary>
-/// Validates the query-string session token for the SignalR relay hub path before the
-/// WebSocket upgrade completes. Never logs credentials; only the rejection reason and
-/// (for successful auth) the non-secret session identity. After successful authentication
-/// the session token is removed from the request query string so it never reaches
-/// downstream URL logging, tracing, or exception telemetry.
+/// Validates the short-lived relay ticket in the query string for the SignalR relay hub path
+/// before the WebSocket upgrade completes. Never logs credentials; only the rejection reason
+/// and (for successful auth) the non-secret session identity. After successful authentication
+/// the ticket is removed from the request query string so it never reaches downstream URL
+/// logging, tracing, or exception telemetry.
 /// </summary>
 public sealed class RelayAuthenticationMiddleware(RequestDelegate next)
 {
@@ -23,23 +23,23 @@ public sealed class RelayAuthenticationMiddleware(RequestDelegate next)
             return;
         }
 
-        var suppliedSessionToken =
-            context.Request.Query[ApiKeyAuthenticationDefaults.SessionTokenQueryParameterName];
+        var suppliedTicket =
+            context.Request.Query[ApiKeyAuthenticationDefaults.TicketQueryParameterName];
 
-        if (suppliedSessionToken.Count != 1 || string.IsNullOrWhiteSpace(suppliedSessionToken[0]))
+        if (suppliedTicket.Count != 1 || string.IsNullOrWhiteSpace(suppliedTicket[0]))
         {
             logger.LogWarning(
-                "Relay hub connection from {RemoteIp} rejected: session token missing or invalid",
+                "Relay hub connection from {RemoteIp} rejected: relay ticket missing or invalid",
                 context.Connection.RemoteIpAddress);
             RejectUnauthorized(context);
             return;
         }
 
-        var session = roomManager.AuthenticateSession(suppliedSessionToken[0]!);
+        var session = roomManager.RedeemRelayTicket(suppliedTicket[0]!);
         if (session is null)
         {
             logger.LogWarning(
-                "Relay hub connection from {RemoteIp} rejected: session token not recognized",
+                "Relay hub connection from {RemoteIp} rejected: relay ticket not recognized",
                 context.Connection.RemoteIpAddress);
             RejectUnauthorized(context);
             return;
@@ -53,15 +53,15 @@ public sealed class RelayAuthenticationMiddleware(RequestDelegate next)
             session.Role);
 
         context.Items[RelayAuthenticationDefaults.AuthenticatedSessionItemKey] = session;
-        RemoveSessionTokenFromQueryString(context);
+        RemoveTicketFromQueryString(context);
         await next(context);
     }
 
-    private static void RemoveSessionTokenFromQueryString(HttpContext context)
+    private static void RemoveTicketFromQueryString(HttpContext context)
     {
         context.Request.QueryString = QueryString.Create(
             context.Request.Query.Where(pair => !pair.Key.Equals(
-                ApiKeyAuthenticationDefaults.SessionTokenQueryParameterName,
+                ApiKeyAuthenticationDefaults.TicketQueryParameterName,
                 StringComparison.OrdinalIgnoreCase)));
     }
 

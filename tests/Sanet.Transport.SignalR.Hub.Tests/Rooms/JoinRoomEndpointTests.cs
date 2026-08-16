@@ -14,13 +14,13 @@ public class JoinRoomEndpointTests
         using var client = factory.CreateClient();
         var hostGameId = Guid.NewGuid();
 
-        using var createResponse = await RoomApiClient.CreateRoomAsync(client, hostGameId);
+        using var createResponse = await RoomApiClient.CreateRoom(client, hostGameId);
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
 
-        await RoomApiClient.MarkReadyAsync(client, roomCode, createResult.SessionToken!);
+        await RoomApiClient.MarkReady(client, roomCode, createResult.SessionToken!);
 
-        using var joinResponse = await RoomApiClient.JoinRoomAsync(client, roomCode, sessionToken: null);
+        using var joinResponse = await RoomApiClient.JoinRoom(client, roomCode, sessionToken: null);
 
         joinResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
@@ -41,7 +41,7 @@ public class JoinRoomEndpointTests
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
-        using var response = await RoomApiClient.JoinRoomAsync(client, "NOEXIST", sessionToken: null);
+        using var response = await RoomApiClient.JoinRoom(client, "NOEXIST", sessionToken: null);
 
         response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
 
@@ -58,11 +58,11 @@ public class JoinRoomEndpointTests
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
-        using var createResponse = await RoomApiClient.CreateRoomAsync(client, Guid.NewGuid());
+        using var createResponse = await RoomApiClient.CreateRoom(client, Guid.NewGuid());
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
 
-        using var joinResponse = await RoomApiClient.JoinRoomAsync(client, roomCode, sessionToken: null);
+        using var joinResponse = await RoomApiClient.JoinRoom(client, roomCode, sessionToken: null);
 
         joinResponse.StatusCode.ShouldBe(HttpStatusCode.Conflict);
 
@@ -80,17 +80,17 @@ public class JoinRoomEndpointTests
         using var client = factory.CreateClient();
         var hostGameId = Guid.NewGuid();
 
-        using var createResponse = await RoomApiClient.CreateRoomAsync(client, hostGameId);
+        using var createResponse = await RoomApiClient.CreateRoom(client, hostGameId);
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
 
-        await RoomApiClient.MarkReadyAsync(client, roomCode, createResult.SessionToken!);
+        await RoomApiClient.MarkReady(client, roomCode, createResult.SessionToken!);
 
-        using var firstJoin = await RoomApiClient.JoinRoomAsync(client, roomCode, sessionToken: null);
+        using var firstJoin = await RoomApiClient.JoinRoom(client, roomCode, sessionToken: null);
         var first = await firstJoin.Content.ReadFromJsonAsync<JoinResponse>(RoomApiClient.JsonOptions);
         first!.DeviceSessionId.ShouldNotBeNull();
 
-        using var rejoin = await RoomApiClient.JoinRoomAsync(client, roomCode, first.SessionToken);
+        using var rejoin = await RoomApiClient.JoinRoom(client, roomCode, first.SessionToken);
 
         rejoin.StatusCode.ShouldBe(HttpStatusCode.OK);
         var result = await rejoin.Content.ReadFromJsonAsync<JoinResponse>(RoomApiClient.JsonOptions);
@@ -107,14 +107,14 @@ public class JoinRoomEndpointTests
         using var client = factory.CreateClient();
         var hostGameId = Guid.NewGuid();
 
-        using var createResponse = await RoomApiClient.CreateRoomAsync(client, hostGameId);
+        using var createResponse = await RoomApiClient.CreateRoom(client, hostGameId);
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
 
-        await RoomApiClient.MarkReadyAsync(client, roomCode, createResult.SessionToken!);
+        await RoomApiClient.MarkReady(client, roomCode, createResult.SessionToken!);
 
-        using var join1 = await RoomApiClient.JoinRoomAsync(client, roomCode, sessionToken: null);
-        using var join2 = await RoomApiClient.JoinRoomAsync(client, roomCode, sessionToken: null);
+        using var join1 = await RoomApiClient.JoinRoom(client, roomCode, sessionToken: null);
+        using var join2 = await RoomApiClient.JoinRoom(client, roomCode, sessionToken: null);
 
         join1.StatusCode.ShouldBe(HttpStatusCode.OK);
         join2.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -132,7 +132,7 @@ public class JoinRoomEndpointTests
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
-        using var response = await RoomApiClient.JoinRoomAsync(client, "ABC234", sessionToken: null, apiKey);
+        using var response = await RoomApiClient.JoinRoom(client, "ABC234", sessionToken: null, apiKey);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
         var body = await response.Content.ReadAsStringAsync();
@@ -146,14 +146,14 @@ public class JoinRoomEndpointTests
         using var client = factory.CreateClient();
 
         var hostGameId = Guid.NewGuid();
-        using var createResponse = await RoomApiClient.CreateRoomAsync(client, hostGameId);
+        using var createResponse = await RoomApiClient.CreateRoom(client, hostGameId);
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
-        await RoomApiClient.MarkReadyAsync(client, roomCode, createResult.SessionToken!);
+        await RoomApiClient.MarkReady(client, roomCode, createResult.SessionToken!);
 
-        using var r1 = await RoomApiClient.JoinRoomAsync(client, roomCode, sessionToken: null);
-        using var r2 = await RoomApiClient.JoinRoomAsync(client, roomCode, sessionToken: null);
-        using var r3 = await RoomApiClient.JoinRoomAsync(client, roomCode, sessionToken: null);
+        using var r1 = await RoomApiClient.JoinRoom(client, roomCode, sessionToken: null);
+        using var r2 = await RoomApiClient.JoinRoom(client, roomCode, sessionToken: null);
+        using var r3 = await RoomApiClient.JoinRoom(client, roomCode, sessionToken: null);
 
         r1.StatusCode.ShouldBe(HttpStatusCode.OK);
         r2.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -167,11 +167,11 @@ public class JoinRoomEndpointTests
         using var client = factory.CreateClient();
         var hostGameId = Guid.NewGuid();
 
-        using var createResponse = await RoomApiClient.CreateRoomAsync(client, hostGameId);
+        using var createResponse = await RoomApiClient.CreateRoom(client, hostGameId);
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
 
-        using var response = await RoomApiClient.MarkReadyAsync(client, roomCode, createResult.SessionToken!);
+        using var response = await RoomApiClient.MarkReady(client, roomCode, createResult.SessionToken!);
 
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
 
@@ -187,11 +187,11 @@ public class JoinRoomEndpointTests
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
-        using var createResponse = await RoomApiClient.CreateRoomAsync(client, Guid.NewGuid());
+        using var createResponse = await RoomApiClient.CreateRoom(client, Guid.NewGuid());
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
 
-        using var response = await RoomApiClient.MarkReadyAsync(client, roomCode, "not-the-host-token");
+        using var response = await RoomApiClient.MarkReady(client, roomCode, "not-the-host-token");
 
         response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
 
@@ -208,7 +208,7 @@ public class JoinRoomEndpointTests
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
-        using var response = await RoomApiClient.MarkReadyAsync(client, "NOEXIST", "any-token");
+        using var response = await RoomApiClient.MarkReady(client, "NOEXIST", "any-token");
 
         response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
 

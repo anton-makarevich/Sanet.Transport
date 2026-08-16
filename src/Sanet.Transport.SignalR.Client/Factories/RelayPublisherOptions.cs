@@ -17,7 +17,8 @@ public sealed record RelayPublisherOptions : PublisherOptions
     public required string RoomCode { get; init; }
 
     /// <summary>
-    /// The session token issued by the REST room join/create API.
+    /// The short-lived relay ticket issued by the REST room relay-ticket API. The ticket is
+    /// carried in the hub URL query string; the REST session token must never be exposed there.
     /// </summary>
-    public required string SessionToken { get; init; }
+    public required string RelayTicket { get; init; }
 }

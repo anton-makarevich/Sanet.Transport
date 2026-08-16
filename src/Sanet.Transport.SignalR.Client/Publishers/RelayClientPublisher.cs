@@ -8,7 +8,13 @@ namespace Sanet.Transport.SignalR.Client.Publishers;
 
 /// <summary>
 /// Relay-specific implementation of <see cref="ITransportPublisher"/> using SignalR.
-/// Connects outbound to a cloud RelayHub using WebSockets and room session token authentication.
+/// Connects outbound to a cloud RelayHub using WebSockets and short-lived relay-ticket
+/// authentication. The relay ticket is bound into the connection URL at construction
+/// time. When <paramref name="relayTicketExpiresAt"/> is supplied, automatic reconnect is
+/// configured with a retry window that ends before the ticket expires, so repeatable
+/// unexpired tickets are reused after transient transport failures; otherwise a
+/// disconnect is terminal and callers must request a fresh ticket and recreate this
+/// publisher.
 /// Subscriber callbacks and public events are dispatched via the <see cref="SynchronizationContext"/>
 /// active at construction time, if any. Consumers on UI frameworks (Avalonia, WPF, WinUI) should
 /// construct this publisher on the UI thread to receive callbacks without manual marshaling.
@@ -73,13 +79,19 @@ public class RelayClientPublisher : ITransportPublisher
     /// </summary>
     /// <param name="hubUrl">The base URL of the SignalR relay hub.</param>
     /// <param name="roomCode">The 6-character room code.</param>
-    /// <param name="sessionToken">The session token issued by the REST room join/create API.</param>
+    /// <param name="relayTicket">The short-lived relay ticket issued by the REST relay-ticket API.</param>
     /// <param name="logger">Logger</param>
+    /// <param name="relayTicketExpiresAt">
+    /// When provided, enables automatic reconnect with a retry window that ends before this
+    /// expiry, reusing the repeatable ticket after transient transport failures. When null,
+    /// no automatic reconnect is configured.
+    /// </param>
     public RelayClientPublisher(
         string hubUrl,
         string roomCode,
-        string sessionToken,
-        ILogger<RelayClientPublisher> logger)
+        string relayTicket,
+        ILogger<RelayClientPublisher> logger,
+        DateTimeOffset? relayTicketExpiresAt = null)
     {
         _logger = logger;
         _syncContext = SynchronizationContext.Current;
@@ -94,21 +106,26 @@ public class RelayClientPublisher : ITransportPublisher
             throw new ArgumentException("Room code must be exactly 6 characters", nameof(roomCode));
         }
 
-        if (string.IsNullOrWhiteSpace(sessionToken))
+        if (string.IsNullOrWhiteSpace(relayTicket))
         {
-            throw new ArgumentException("Session token cannot be null or empty", nameof(sessionToken));
+            throw new ArgumentException("Relay ticket cannot be null or empty", nameof(relayTicket));
         }
 
         _roomCode = roomCode;
 
-        _hubConnection = new HubConnectionBuilder()
-            .WithUrl(BuildConnectionUrl(hubUrl, sessionToken), options =>
+        var builder = new HubConnectionBuilder()
+            .WithUrl(BuildConnectionUrl(hubUrl, relayTicket), options =>
             {
                 options.Transports = HttpTransportType.WebSockets;
                 options.SkipNegotiation = true;
-            })
-            .WithAutomaticReconnect()
-            .Build();
+            });
+
+        if (relayTicketExpiresAt is { } expiresAt)
+        {
+            builder = builder.WithAutomaticReconnect(new RelayTicketExpiryRetryPolicy(expiresAt));
+        }
+
+        _hubConnection = builder.Build();
 
         _hubConnection.On<RelayEnvelope>("OnReceive", HandleEnvelopeReceived);
         _hubConnection.On<HubError>("OnError", HandleHubError);
@@ -121,15 +138,15 @@ public class RelayClientPublisher : ITransportPublisher
     }
 
     /// <summary>
-    /// Builds the SignalR hub connection URL, appending the session token as a query-string
-    /// parameter and replacing any sessionToken parameter already present in the hub URL.
+    /// Builds the SignalR hub connection URL, appending the relay ticket as a query-string
+    /// parameter and replacing any ticket parameter already present in the hub URL.
     /// </summary>
     /// <param name="hubUrl">The base URL of the SignalR relay hub.</param>
-    /// <param name="sessionToken">The session token issued by the REST room join/create API.</param>
-    internal static string BuildConnectionUrl(string hubUrl, string sessionToken)
+    /// <param name="relayTicket">The short-lived relay ticket issued by the REST relay-ticket API.</param>
+    internal static string BuildConnectionUrl(string hubUrl, string relayTicket)
     {
         var uriBuilder = new UriBuilder(hubUrl);
-        var queryToAppend = $"sessionToken={Uri.EscapeDataString(sessionToken)}";
+        var queryToAppend = $"ticket={Uri.EscapeDataString(relayTicket)}";
 
         if (string.IsNullOrEmpty(uriBuilder.Query) || uriBuilder.Query == "?")
         {
@@ -141,7 +158,7 @@ public class RelayClientPublisher : ITransportPublisher
                 .Split('&', StringSplitOptions.RemoveEmptyEntries)
                 .Where(pair => !pair
                     .Split('=', 2)[0]
-                    .Equals("sessionToken", StringComparison.OrdinalIgnoreCase));
+                    .Equals("ticket", StringComparison.OrdinalIgnoreCase));
 
             uriBuilder.Query = string.Join('&', existingQueryParameters.Append(queryToAppend));
         }
@@ -379,9 +396,11 @@ public class RelayClientPublisher : ITransportPublisher
             _logger.LogInformation("Relay client connection closed");
         }
 
-        // Return Task.CompletedTask to signal that reconnect policy is owned
-        // by the caller via HubConnectionBuilder.WithAutomaticReconnect().
-        // Without that configuration, Closed is terminal.
+        // Closed is terminal: it fires when no retry window is configured (no ticket
+        // expiry was supplied), when the retry window ends before the relay ticket
+        // expires, or when the publisher is disposed. Reconnecting with an expired
+        // ticket would fail authentication, so callers must obtain a fresh relay
+        // ticket and recreate the publisher once Closed is raised.
         RaiseEvent(() => Closed?.Invoke(exception));
         return Task.CompletedTask;
     }

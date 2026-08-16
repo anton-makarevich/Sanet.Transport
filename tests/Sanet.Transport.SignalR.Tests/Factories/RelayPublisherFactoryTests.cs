@@ -12,7 +12,7 @@ namespace Sanet.Transport.SignalR.Tests.Factories;
 public class RelayPublisherFactoryTests
 {
     private const string RoomCode = "ABCDEF";
-    private const string SessionToken = "session-token";
+    private const string RelayTicket = "relay-ticket";
 
     private static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(10);
 
@@ -26,11 +26,11 @@ public class RelayPublisherFactoryTests
         _sut = new RelayPublisherFactory(_loggerFactory);
     }
 
-    private static RelayPublisherOptions Options(string hubUrl, string sessionToken = SessionToken) => new()
+    private static RelayPublisherOptions Options(string hubUrl, string relayTicket = RelayTicket) => new()
     {
         HubUrl = hubUrl,
         RoomCode = RoomCode,
-        SessionToken = sessionToken
+        RelayTicket = relayTicket
     };
 
     [Fact]
@@ -90,7 +90,7 @@ public class RelayPublisherFactoryTests
     [Fact]
     public async Task CreateAsync_WhenHubReachable_ReturnsConnectedPublisher()
     {
-        await using var host = await TestRelayHubHost.StartAsync(SessionToken);
+        await using var host = await TestRelayHubHost.StartAsync(RelayTicket);
         var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
 
         var publisher = await WithTimeout(_sut.Create(Options(hubUrl)));
@@ -100,25 +100,25 @@ public class RelayPublisherFactoryTests
     }
 
     [Fact]
-    public async Task CreateAsync_WhenHubRejectsWrongSessionToken_Throws()
+    public async Task CreateAsync_WhenHubRejectsWrongRelayTicket_Throws()
     {
-        await using var host = await TestRelayHubHost.StartAsync(SessionToken);
+        await using var host = await TestRelayHubHost.StartAsync(RelayTicket);
         var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
 
         await WithTimeout(
-            Should.ThrowAsync<Exception>(() => _sut.Create(Options(hubUrl, "wrong-token"))));
+            Should.ThrowAsync<Exception>(() => _sut.Create(Options(hubUrl, "wrong-ticket"))));
     }
 
     [Fact]
     public async Task CreateAsync_WhenConnectionFails_DisposesPublisher()
     {
-        await using var host = await TestRelayHubHost.StartAsync(SessionToken);
+        await using var host = await TestRelayHubHost.StartAsync(RelayTicket);
         var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
 
         // A failed connection must dispose the partially-created publisher and rethrow;
         // the host must remain healthy for a subsequent valid connection.
         await WithTimeout(
-            Should.ThrowAsync<Exception>(() => _sut.Create(Options(hubUrl, "wrong-token"))));
+            Should.ThrowAsync<Exception>(() => _sut.Create(Options(hubUrl, "wrong-ticket"))));
 
         var publisher = await WithTimeout(_sut.Create(Options(hubUrl)));
 

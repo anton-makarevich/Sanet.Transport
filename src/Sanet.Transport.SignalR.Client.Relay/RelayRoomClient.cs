@@ -252,6 +252,64 @@ public sealed class RelayRoomClient : IRelayRoomClient
         return RoomOperationResult.Failed(MapHubError(payload.Error, response.StatusCode));
     }
 
+    public async Task<RelayTicketResult> GetRelayTicket(
+        string roomCode,
+        string sessionToken,
+        CancellationToken cancellationToken = default,
+        RelayClientOptions? options = null)
+    {
+        _logger.LogInformation(
+            "Requesting relay ticket for relay room {RoomCode}",
+            roomCode);
+
+        return await ExecuteAsync(
+            ct => GetRelayTicketCore(roomCode, sessionToken, options, ct),
+            RelayTicketResult.Failed,
+            "request relay ticket",
+            cancellationToken);
+    }
+
+    private async Task<RelayTicketResult> GetRelayTicketCore(
+        string roomCode,
+        string sessionToken,
+        RelayClientOptions? options,
+        CancellationToken cancellationToken)
+    {
+        using var request = await CreateRequest(
+            HttpMethod.Post,
+            $"api/rooms/{Uri.EscapeDataString(roomCode)}/relay-ticket",
+            sessionToken,
+            options);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (TryMapSpecialStatus(response.StatusCode, body, out var specialError))
+        {
+            return RelayTicketResult.Failed(specialError);
+        }
+
+        var payload = DeserializeOrNull<RelayTicketResponse>(body);
+        if (payload is null)
+        {
+            return RelayTicketResult.Failed(DeserializationError());
+        }
+
+        if (response.IsSuccessStatusCode && payload.Success
+            && !string.IsNullOrEmpty(payload.Ticket)
+            && payload.ExpiresAt is { } expiresAt)
+        {
+            _logger.LogInformation(
+                "Relay ticket for relay room {RoomCode} obtained; expires {ExpiresAt}",
+                roomCode,
+                expiresAt);
+
+            return RelayTicketResult.Succeeded(payload.Ticket, expiresAt);
+        }
+
+        return RelayTicketResult.Failed(MapHubError(payload.Error, response.StatusCode));
+    }
+
     public async Task<RelayClientError?> Health(
         CancellationToken cancellationToken = default,
         RelayClientOptions? options = null)
