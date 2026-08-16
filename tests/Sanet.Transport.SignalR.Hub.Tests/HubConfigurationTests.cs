@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -69,6 +70,26 @@ public class HubConfigurationTests
         var options = factory.Services.GetRequiredService<IOptions<HubOptions>>().Value;
         options.SignalR.KeepAliveIntervalSeconds.ShouldBe(10);
         options.SignalR.ClientTimeoutIntervalSeconds.ShouldBe(40);
+    }
+
+    [Fact]
+    public async Task TrustedProxies_PlainIp_IsAddedToKnownProxies()
+    {
+        await using var factory = new HubApplicationFactory(trustedProxies: ["203.0.113.5"]);
+        using var client = factory.CreateClient();
+
+        var options = factory.Services.GetRequiredService<IOptions<ForwardedHeadersOptions>>().Value;
+        options.KnownProxies.Select(ip => ip.ToString()).ShouldContain("203.0.113.5");
+    }
+
+    [Fact]
+    public async Task TrustedProxies_Cidr_IsAddedToKnownIpNetworks()
+    {
+        await using var factory = new HubApplicationFactory(trustedProxies: ["10.0.0.0/8"]);
+        using var client = factory.CreateClient();
+
+        var options = factory.Services.GetRequiredService<IOptions<ForwardedHeadersOptions>>().Value;
+        options.KnownIPNetworks.Select(network => network.ToString()).ShouldContain("10.0.0.0/8");
     }
 
     [Fact]

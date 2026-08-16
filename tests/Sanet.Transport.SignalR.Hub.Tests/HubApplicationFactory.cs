@@ -29,6 +29,7 @@ public sealed class HubApplicationFactory : IAsyncDisposable
     private readonly int _peerDisconnectNotificationDelaySeconds;
     private readonly int _signalRKeepAliveIntervalSeconds;
     private readonly int _signalRClientTimeoutIntervalSeconds;
+    private readonly string[]? _trustedProxies;
     private readonly TimeProvider? _timeProvider;
     private readonly CapturingLogger<ApiKeyAuthenticationMiddleware>? _apiKeyAuthenticationLogger;
     private readonly CapturingLogger<RelayAuthenticationMiddleware>? _relayAuthenticationLogger;
@@ -49,6 +50,7 @@ public sealed class HubApplicationFactory : IAsyncDisposable
         int peerDisconnectNotificationDelaySeconds = 5,
         int signalRKeepAliveIntervalSeconds = 86400,
         int signalRClientTimeoutIntervalSeconds = 172800,
+        string[]? trustedProxies = null,
         TimeProvider? timeProvider = null,
         CapturingLogger<ApiKeyAuthenticationMiddleware>? apiKeyAuthenticationLogger = null,
         CapturingLogger<RelayAuthenticationMiddleware>? relayAuthenticationLogger = null)
@@ -63,6 +65,7 @@ public sealed class HubApplicationFactory : IAsyncDisposable
         _peerDisconnectNotificationDelaySeconds = peerDisconnectNotificationDelaySeconds;
         _signalRKeepAliveIntervalSeconds = signalRKeepAliveIntervalSeconds;
         _signalRClientTimeoutIntervalSeconds = signalRClientTimeoutIntervalSeconds;
+        _trustedProxies = trustedProxies;
         _timeProvider = timeProvider;
         _apiKeyAuthenticationLogger = apiKeyAuthenticationLogger;
         _relayAuthenticationLogger = relayAuthenticationLogger;
@@ -175,6 +178,17 @@ public sealed class HubApplicationFactory : IAsyncDisposable
             ["Hub:SignalR:KeepAliveIntervalSeconds"] = _signalRKeepAliveIntervalSeconds.ToString(),
             ["Hub:SignalR:ClientTimeoutIntervalSeconds"] = _signalRClientTimeoutIntervalSeconds.ToString()
         });
+
+        if (_trustedProxies is not null)
+        {
+            var proxyConfig = new Dictionary<string, string?>();
+            for (var i = 0; i < _trustedProxies.Length; i++)
+            {
+                proxyConfig[$"Hub:TrustedProxies:{i}"] = _trustedProxies[i];
+            }
+
+            builder.Configuration.AddInMemoryCollection(proxyConfig);
+        }
 
         builder.Services.PostConfigure<Microsoft.AspNetCore.SignalR.HubOptions>(options =>
         {

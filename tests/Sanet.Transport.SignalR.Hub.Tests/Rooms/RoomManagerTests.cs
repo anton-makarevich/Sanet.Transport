@@ -1128,6 +1128,21 @@ public class RoomManagerTests
         result.ExpiresAt.ShouldBe(now.AddSeconds(300));
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void IssueRelayTicket_WithMissingOrInvalidSessionToken_ReturnsSessionInvalid(string? sessionToken)
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
+        manager.CreateRoom(Guid.NewGuid());
+
+        var result = manager.IssueRelayTicket("ABC234", sessionToken!);
+
+        result.Outcome.ShouldBe(RelayTicketOutcome.SessionInvalid);
+        result.Ticket.ShouldBeNull();
+    }
+
     [Fact]
     public void IssueRelayTicket_RoomNotFound_ReturnsRoomNotFound()
     {
