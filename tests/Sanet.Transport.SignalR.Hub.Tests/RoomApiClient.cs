@@ -1,8 +1,10 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Sanet.Transport.SignalR.Hub.Contracts;
 using Sanet.Transport.SignalR.Hub.Security;
+using Shouldly;
 
 namespace Sanet.Transport.SignalR.Hub.Tests;
 
@@ -80,7 +82,11 @@ internal static class RoomApiClient
         return await client.SendAsync(request);
     }
 
-    public static async Task<HttpResponseMessage> RequestRelayTicketAsync(
+    /// <summary>
+    /// Requests a relay ticket from <c>POST /api/rooms/{roomCode}/relay-ticket</c> and returns
+    /// the ticket value, asserting a successful response.
+    /// </summary>
+    public static async Task<string> RequestRelayTicketAsync(
         HttpClient client,
         string roomCode,
         string sessionToken,
@@ -91,7 +97,13 @@ internal static class RoomApiClient
             $"/api/rooms/{roomCode}/relay-ticket");
         request.Headers.Add("Session-Token", sessionToken);
         AddApiKey(request, apiKey);
-        return await client.SendAsync(request);
+        using var response = await client.SendAsync(request);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var ticket = await response.Content.ReadFromJsonAsync<RelayTicketResponse>(JsonOptions);
+        ticket.ShouldNotBeNull();
+        ticket.Success.ShouldBeTrue();
+        ticket.Ticket.ShouldNotBeNull();
+        return ticket.Ticket;
     }
 
     private static void AddApiKey(HttpRequestMessage request, string? apiKey)

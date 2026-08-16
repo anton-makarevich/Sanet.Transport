@@ -587,6 +587,18 @@ public sealed class RoomManager : IRoomManager
                 return RelayTicketResult.Expired();
             }
 
+            // Terminal dissolution deadline: purge and reject.
+            if (room.IsDissolvedAt(now))
+            {
+                _logger.LogWarning(
+                    "Relay-ticket request rejected for room {RoomCode}: room dissolved",
+                    roomCode);
+                room.RevokeAllSessions();
+                SyncSessionIndex(room);
+                _rooms.Remove(roomCode);
+                return RelayTicketResult.NotFound();
+            }
+
             if (!room.TryGetSession(sessionToken, out var session) || session.ExpiresAt <= now)
             {
                 _logger.LogWarning(
@@ -596,7 +608,13 @@ public sealed class RoomManager : IRoomManager
             }
 
             var ticket = GenerateSessionToken();
-            room.IssueRelayTicket(sessionToken, ticket, now, _relayTicketTtl);
+            if (!room.IssueRelayTicket(sessionToken, ticket, now, _relayTicketTtl))
+            {
+                _logger.LogWarning(
+                    "Relay-ticket request rejected for room {RoomCode}: active-ticket limit reached",
+                    roomCode);
+                return RelayTicketResult.LimitReached();
+            }
 
             _logger.LogInformation(
                 "Relay ticket issued for device session {DeviceSessionId} in room {RoomCode}; expires {ExpiresAt}",

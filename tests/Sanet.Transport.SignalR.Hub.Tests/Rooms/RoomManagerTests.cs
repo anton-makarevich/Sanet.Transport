@@ -1156,6 +1156,43 @@ public class RoomManagerTests
     }
 
     [Fact]
+    public void IssueRelayTicket_RoomDissolved_PurgesRoomAndReturnsRoomNotFound()
+    {
+        var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero));
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), timeProvider: timeProvider);
+        var created = manager.CreateRoom(Guid.NewGuid());
+        manager.MarkRoomReady("ABC234", created.Session!.Token);
+        manager.MarkRoomForDissolution("ABC234");
+
+        timeProvider.Advance(TimeSpan.FromSeconds(DefaultDissolutionGracePeriodSeconds));
+
+        var result = manager.IssueRelayTicket("ABC234", created.Session!.Token);
+
+        result.Outcome.ShouldBe(RelayTicketOutcome.RoomNotFound);
+        result.Ticket.ShouldBeNull();
+        manager.JoinRoom("ABC234", sessionToken: null).Outcome.ShouldBe(RoomJoinOutcome.RoomNotFound);
+    }
+
+    [Fact]
+    public void IssueRelayTicket_AtActiveTicketLimit_ReturnsLimitReached()
+    {
+        var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), now: now);
+        var creation = manager.CreateRoom(Guid.NewGuid());
+
+        for (var i = 0; i < Room.MaxActiveRelayTickets; i++)
+        {
+            var issued = manager.IssueRelayTicket("ABC234", creation.Session!.Token);
+            issued.Outcome.ShouldBe(RelayTicketOutcome.Issued);
+        }
+
+        var result = manager.IssueRelayTicket("ABC234", creation.Session!.Token);
+
+        result.Outcome.ShouldBe(RelayTicketOutcome.LimitReached);
+        result.Ticket.ShouldBeNull();
+    }
+
+    [Fact]
     public void IssueRelayTicket_WithUnknownSession_ReturnsSessionInvalid()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));

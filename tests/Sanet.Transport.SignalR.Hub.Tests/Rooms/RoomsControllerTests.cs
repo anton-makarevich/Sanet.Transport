@@ -608,6 +608,22 @@ public class RoomsControllerTests
     }
 
     [Fact]
+    public void IssueRelayTicket_TicketLimitReached_ReturnsNotFoundWithoutLeakingRoomExistence()
+    {
+        SetSessionTokenHeader(SessionToken);
+        _roomManager.IssueRelayTicket(RoomCode, SessionToken)
+            .Returns(RelayTicketResult.LimitReached());
+
+        var result = _sut.IssueRelayTicket(RoomCode);
+
+        var notFound = result.Result.ShouldBeOfType<NotFoundObjectResult>();
+        var response = notFound.Value.ShouldBeOfType<RelayTicketResponse>();
+        response.Success.ShouldBeFalse();
+        response.Ticket.ShouldBeNull();
+        response.Error!.Code.ShouldBe(HubErrorCode.RoomNotFound);
+    }
+
+    [Fact]
     public void IssueRelayTicket_ValidRequest_LogsInformation()
     {
         SetSessionTokenHeader(SessionToken);

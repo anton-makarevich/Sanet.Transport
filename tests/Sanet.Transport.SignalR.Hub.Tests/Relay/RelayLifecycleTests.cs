@@ -311,7 +311,7 @@ public class RelayLifecycleTests
         using var readyResponse = await client.SendAsync(readyRequest);
         readyResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
-        var hostTicket = await RequestRelayTicketAsync(client, created.RoomCode!, created.SessionToken!);
+        var hostTicket = await RoomApiClient.RequestRelayTicketAsync(client, created.RoomCode!, created.SessionToken!);
 
         return new ReadyRoom(
             created.RoomCode!, created.SessionToken!, created.DeviceSessionId!.Value, hostTicket);
@@ -332,24 +332,11 @@ public class RelayLifecycleTests
         joined.SessionToken.ShouldNotBeNull();
         joined.DeviceSessionId.ShouldNotBeNull();
 
-        var relayTicket = await RequestRelayTicketAsync(client, roomCode, joined.SessionToken);
+        var relayTicket = await RoomApiClient.RequestRelayTicketAsync(client, roomCode, joined.SessionToken);
 
         return new JoinedSession(joined.SessionToken, joined.DeviceSessionId.Value, relayTicket);
     }
 
-    private static async Task<string> RequestRelayTicketAsync(
-        HttpClient client,
-        string roomCode,
-        string sessionToken)
-    {
-        using var ticketResponse = await RoomApiClient.RequestRelayTicketAsync(client, roomCode, sessionToken);
-        ticketResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
-        var ticket = await ticketResponse.Content.ReadFromJsonAsync<RelayTicketResponse>(JsonOptions);
-        ticket.ShouldNotBeNull();
-        ticket.Success.ShouldBeTrue();
-        ticket.Ticket.ShouldNotBeNull();
-        return ticket.Ticket;
-    }
 
     private static async Task WaitForPeerConnectedAsync(HubConnection host, HubConnection client)
     {

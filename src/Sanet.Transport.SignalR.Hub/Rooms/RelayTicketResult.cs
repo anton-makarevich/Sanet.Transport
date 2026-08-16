@@ -20,6 +20,9 @@ public sealed record RelayTicketResult(
 
     public static RelayTicketResult SessionInvalid() =>
         new(RelayTicketOutcome.SessionInvalid, null, null);
+
+    public static RelayTicketResult LimitReached() =>
+        new(RelayTicketOutcome.LimitReached, null, null);
 }
 
 public enum RelayTicketOutcome
@@ -27,5 +30,6 @@ public enum RelayTicketOutcome
     Issued,
     RoomNotFound,
     RoomExpired,
-    SessionInvalid
+    SessionInvalid,
+    LimitReached
 }

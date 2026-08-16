@@ -333,7 +333,7 @@ public class RelayRpcTests
         using var readyResponse = await MarkReadyAsync(client, created.RoomCode, created.SessionToken);
         readyResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
-        var ticket = await RequestRelayTicketAsync(client, created.RoomCode, created.SessionToken);
+        var ticket = await RoomApiClient.RequestRelayTicketAsync(client, created.RoomCode, created.SessionToken);
 
         return new ReadyHost(created.RoomCode, created.SessionToken, ticket);
     }
@@ -357,24 +357,11 @@ public class RelayRpcTests
         result.SessionToken.ShouldNotBeNull();
         result.DeviceSessionId.ShouldNotBeNull();
 
-        var relayTicket = await RequestRelayTicketAsync(client, roomCode, result.SessionToken);
+        var relayTicket = await RoomApiClient.RequestRelayTicketAsync(client, roomCode, result.SessionToken);
 
         return new JoinedRoom(roomCode, result.SessionToken, result.DeviceSessionId.Value, relayTicket);
     }
 
-    private static async Task<string> RequestRelayTicketAsync(
-        HttpClient client,
-        string roomCode,
-        string sessionToken)
-    {
-        using var ticketResponse = await RoomApiClient.RequestRelayTicketAsync(client, roomCode, sessionToken);
-        ticketResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
-        var ticket = await ticketResponse.Content.ReadFromJsonAsync<RelayTicketResponse>(JsonOptions);
-        ticket.ShouldNotBeNull();
-        ticket.Success.ShouldBeTrue();
-        ticket.Ticket.ShouldNotBeNull();
-        return ticket.Ticket;
-    }
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {

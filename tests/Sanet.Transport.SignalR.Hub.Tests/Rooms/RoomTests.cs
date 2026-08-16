@@ -307,6 +307,47 @@ public class RoomTests
         room.TryResolveRelayTicket("ticket-1", DefaultNow.AddHours(3), out _).ShouldBeFalse();
     }
 
+    [Fact]
+    public void IssueRelayTicket_WithExpiredTicketsPresent_PrunesThemBeforeIssuing()
+    {
+        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        room.IssueRelayTicket("host-token", "expired-ticket", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+        var later = DefaultNow.AddSeconds(61);
+
+        for (var i = 0; i < Room.MaxActiveRelayTickets; i++)
+        {
+            room.IssueRelayTicket("host-token", $"live-{i}", later, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+        }
+    }
+
+    [Fact]
+    public void TryResolveRelayTicket_RemovesExpiredTicketsAsLookupSideEffect()
+    {
+        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        room.IssueRelayTicket("host-token", "expired-ticket", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+        var later = DefaultNow.AddSeconds(61);
+
+        room.TryResolveRelayTicket("expired-ticket", later, out _).ShouldBeFalse();
+
+        for (var i = 0; i < Room.MaxActiveRelayTickets; i++)
+        {
+            room.IssueRelayTicket("host-token", $"live-{i}", later, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+        }
+    }
+
+    [Fact]
+    public void IssueRelayTicket_AtCapacityWithAllLiveTickets_ReturnsFalse()
+    {
+        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+
+        for (var i = 0; i < Room.MaxActiveRelayTickets; i++)
+        {
+            room.IssueRelayTicket("host-token", $"live-{i}", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
+        }
+
+        room.IssueRelayTicket("host-token", "overflow", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeFalse();
+    }
+
     private static Room CreateRoom(Guid hostDeviceSessionId, Guid hostGameId)
     {
         var hostMember = new RoomMember(hostDeviceSessionId, RoomRole.Host, DefaultNow);

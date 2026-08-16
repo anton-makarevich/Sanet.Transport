@@ -9,7 +9,9 @@ namespace Sanet.Transport.SignalR.Client.Publishers;
 /// <summary>
 /// Relay-specific implementation of <see cref="ITransportPublisher"/> using SignalR.
 /// Connects outbound to a cloud RelayHub using WebSockets and short-lived relay-ticket
-/// authentication.
+/// authentication. The relay ticket is bound into the connection URL at construction
+/// time, so after a disconnect callers must request a fresh ticket and recreate this
+/// publisher; automatic reconnect is not supported.
 /// Subscriber callbacks and public events are dispatched via the <see cref="SynchronizationContext"/>
 /// active at construction time, if any. Consumers on UI frameworks (Avalonia, WPF, WinUI) should
 /// construct this publisher on the UI thread to receive callbacks without manual marshaling.
@@ -108,7 +110,6 @@ public class RelayClientPublisher : ITransportPublisher
                 options.Transports = HttpTransportType.WebSockets;
                 options.SkipNegotiation = true;
             })
-            .WithAutomaticReconnect()
             .Build();
 
         _hubConnection.On<RelayEnvelope>("OnReceive", HandleEnvelopeReceived);
@@ -380,9 +381,10 @@ public class RelayClientPublisher : ITransportPublisher
             _logger.LogInformation("Relay client connection closed");
         }
 
-        // Return Task.CompletedTask to signal that reconnect policy is owned
-        // by the caller via HubConnectionBuilder.WithAutomaticReconnect().
-        // Without that configuration, Closed is terminal.
+        // Closed is terminal: automatic reconnect is intentionally not configured because
+        // relay tickets are short-lived and are bound into the hub URL at construction time.
+        // Reconnecting with the same ticket would fail authentication, so callers must
+        // obtain a fresh relay ticket and recreate the publisher after a disconnect.
         RaiseEvent(() => Closed?.Invoke(exception));
         return Task.CompletedTask;
     }
