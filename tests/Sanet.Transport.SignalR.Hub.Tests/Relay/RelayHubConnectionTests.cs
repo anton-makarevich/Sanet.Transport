@@ -143,7 +143,7 @@ public class RelayHubConnectionTests
         var host = await CreateReadyHostAsync(client);
         var join = await JoinRoomAsync(client, host.RoomCode, sessionToken: null);
 
-        using var removeResponse = await RoomApiClient.RemoveMemberAsync(
+        using var removeResponse = await RoomApiClient.RemoveMember(
             client, host.RoomCode, join.DeviceSessionId, host.SessionToken);
         removeResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
@@ -166,7 +166,7 @@ public class RelayHubConnectionTests
 
         var host = await CreateReadyHostAsync(client);
 
-        using var closeResponse = await RoomApiClient.CloseRoomAsync(client, host.RoomCode, host.SessionToken);
+        using var closeResponse = await RoomApiClient.CloseRoom(client, host.RoomCode, host.SessionToken);
         closeResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
         await using var connection = factory.CreateRelayHubConnection(host.Ticket);
@@ -223,7 +223,7 @@ public class RelayHubConnectionTests
 
     private static async Task<ReadyHost> CreateReadyHostAsync(HttpClient client)
     {
-        using var createResponse = await RoomApiClient.CreateRoomAsync(client, Guid.NewGuid());
+        using var createResponse = await RoomApiClient.CreateRoom(client, Guid.NewGuid());
         createResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         created.ShouldNotBeNull();
@@ -231,10 +231,10 @@ public class RelayHubConnectionTests
         created.RoomCode.ShouldNotBeNull();
         created.SessionToken.ShouldNotBeNull();
 
-        using var readyResponse = await RoomApiClient.MarkReadyAsync(client, created.RoomCode, created.SessionToken);
+        using var readyResponse = await RoomApiClient.MarkReady(client, created.RoomCode, created.SessionToken);
         readyResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
-        var ticket = await RoomApiClient.RequestRelayTicketAsync(client, created.RoomCode, created.SessionToken);
+        var ticket = await RoomApiClient.RequestRelayTicket(client, created.RoomCode, created.SessionToken);
 
         return new ReadyHost(created.RoomCode, created.SessionToken, ticket);
     }
@@ -244,14 +244,14 @@ public class RelayHubConnectionTests
         string roomCode,
         string? sessionToken)
     {
-        using var response = await RoomApiClient.JoinRoomAsync(client, roomCode, sessionToken);
+        using var response = await RoomApiClient.JoinRoom(client, roomCode, sessionToken);
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         var result = await response.Content.ReadFromJsonAsync<JoinResponse>(RoomApiClient.JsonOptions);
         result.ShouldNotBeNull();
         result.SessionToken.ShouldNotBeNull();
         result.DeviceSessionId.ShouldNotBeNull();
 
-        var ticket = await RoomApiClient.RequestRelayTicketAsync(client, roomCode, result.SessionToken);
+        var ticket = await RoomApiClient.RequestRelayTicket(client, roomCode, result.SessionToken);
 
         return new JoinedMember(result.SessionToken, result.DeviceSessionId.Value, ticket);
     }

@@ -16,7 +16,7 @@ internal static class RoomApiClient
 {
     public static JsonSerializerOptions JsonOptions { get; } = CreateJsonOptions();
 
-    public static async Task<HttpResponseMessage> CreateRoomAsync(
+    public static async Task<HttpResponseMessage> CreateRoom(
         HttpClient client,
         Guid gameId,
         string? apiKey = HubApplicationFactory.ApiKey)
@@ -27,7 +27,7 @@ internal static class RoomApiClient
         return await client.SendAsync(request);
     }
 
-    public static async Task<HttpResponseMessage> JoinRoomAsync(
+    public static async Task<HttpResponseMessage> JoinRoom(
         HttpClient client,
         string roomCode,
         string? sessionToken,
@@ -43,7 +43,7 @@ internal static class RoomApiClient
         return await client.SendAsync(request);
     }
 
-    public static async Task<HttpResponseMessage> MarkReadyAsync(
+    public static async Task<HttpResponseMessage> MarkReady(
         HttpClient client,
         string roomCode,
         string sessionToken,
@@ -55,7 +55,7 @@ internal static class RoomApiClient
         return await client.SendAsync(request);
     }
 
-    public static async Task<HttpResponseMessage> CloseRoomAsync(
+    public static async Task<HttpResponseMessage> CloseRoom(
         HttpClient client,
         string roomCode,
         string sessionToken,
@@ -67,7 +67,7 @@ internal static class RoomApiClient
         return await client.SendAsync(request);
     }
 
-    public static async Task<HttpResponseMessage> RemoveMemberAsync(
+    public static async Task<HttpResponseMessage> RemoveMember(
         HttpClient client,
         string roomCode,
         Guid deviceSessionId,
@@ -86,7 +86,7 @@ internal static class RoomApiClient
     /// Requests a relay ticket from <c>POST /api/rooms/{roomCode}/relay-ticket</c> and returns
     /// the ticket value, asserting a successful response.
     /// </summary>
-    public static async Task<string> RequestRelayTicketAsync(
+    public static async Task<string> RequestRelayTicket(
         HttpClient client,
         string roomCode,
         string sessionToken,

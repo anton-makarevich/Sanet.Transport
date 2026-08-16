@@ -333,7 +333,7 @@ public class RelayRpcTests
         using var readyResponse = await MarkReadyAsync(client, created.RoomCode, created.SessionToken);
         readyResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
-        var ticket = await RoomApiClient.RequestRelayTicketAsync(client, created.RoomCode, created.SessionToken);
+        var ticket = await RoomApiClient.RequestRelayTicket(client, created.RoomCode, created.SessionToken);
 
         return new ReadyHost(created.RoomCode, created.SessionToken, ticket);
     }
@@ -357,7 +357,7 @@ public class RelayRpcTests
         result.SessionToken.ShouldNotBeNull();
         result.DeviceSessionId.ShouldNotBeNull();
 
-        var relayTicket = await RoomApiClient.RequestRelayTicketAsync(client, roomCode, result.SessionToken);
+        var relayTicket = await RoomApiClient.RequestRelayTicket(client, roomCode, result.SessionToken);
 
         return new JoinedRoom(roomCode, result.SessionToken, result.DeviceSessionId.Value, relayTicket);
     }
