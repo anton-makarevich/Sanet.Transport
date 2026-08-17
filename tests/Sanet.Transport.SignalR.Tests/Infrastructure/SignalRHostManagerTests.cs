@@ -41,7 +41,7 @@ public class SignalRHostManagerTests
         // Assert
         publisher.ShouldNotBeNull();
         publisher.ShouldBeOfType<SignalRServerPublisher>();
-        hostManager.Dispose();
+        await hostManager.DisposeAsync();
     }
     
     [Fact]
@@ -52,11 +52,11 @@ public class SignalRHostManagerTests
         await hostManager.Start();
         
         // Act & Assert - should not throw
-        Should.NotThrow(() => hostManager.Dispose());
+        await Should.NotThrowAsync(async () => await hostManager.DisposeAsync());
     }
     
     [Fact]
-    public void HubUrl_ReturnsValidUrl()
+    public async Task HubUrl_ReturnsValidUrl()
     {
         // Arrange
         var hostManager = new SignalRHostManager(4569,"myHub");
@@ -67,7 +67,7 @@ public class SignalRHostManagerTests
         hubUrl.ShouldContain(":4569/myHub");
         //check if it contains valid ip address or localhost
         hubUrl.ShouldMatch(@"http://(localhost|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):4569/myHub");
-        hostManager.Dispose();
+        await hostManager.DisposeAsync();
     }
     
     [Fact]
@@ -76,7 +76,7 @@ public class SignalRHostManagerTests
         // Arrange
         var hostManager = new SignalRHostManager();
         await hostManager.Start(); // Start and dispose to set internal state
-        hostManager.Dispose();
+        await hostManager.DisposeAsync();
 
         // Act & Assert
         await Should.ThrowAsync<ObjectDisposedException>(async () => await hostManager.Start());
@@ -88,7 +88,7 @@ public class SignalRHostManagerTests
         // Arrange
         var hostManager = new SignalRHostManager();
         await hostManager.Start(); // Start and dispose to set internal state
-        hostManager.Dispose();
+        await hostManager.DisposeAsync();
 
         // Act & Assert
         Should.Throw<ObjectDisposedException>(() => hostManager.Publisher);

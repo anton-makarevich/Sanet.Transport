@@ -8,13 +8,14 @@ namespace Sanet.Transport.SignalR.Server.Infrastructure;
 /// <summary>
 /// Manages a self-contained SignalR host that can be embedded in any application
 /// </summary>
-public class SignalRHostManager : IDisposable
+public class SignalRHostManager : IAsyncDisposable
 {
     private IHost? _host;
     private readonly string _url;
     private readonly string _hub;
     private SignalRServerPublisher? _publisher;
     private bool _isDisposed;
+    private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
 
     /// <summary>
     /// Creates a new SignalR host manager
@@ -32,28 +33,30 @@ public class SignalRHostManager : IDisposable
     /// </summary>
     public async Task Start()
     {
-        if (_isDisposed)
-            throw new ObjectDisposedException(nameof(SignalRHostManager));
+        await _lifecycleLock.WaitAsync();
+        try
+        {
+            if (_isDisposed)
+                throw new ObjectDisposedException(nameof(SignalRHostManager));
 
-        var builder = WebApplication.CreateBuilder();
-        
-        // Add SignalR services
-        builder.Services.AddSignalR();
-        builder.WebHost.UseUrls(_url);
-        
-        // Build the app
-        var app = builder.Build();
-        
-        // Configure the HTTP request pipeline
-        app.UseRouting();
-        app.MapHub<TransportHub>($"/{_hub}");
-        
-        // Create the publisher
-        _publisher = new SignalRServerPublisher(app.Services.GetRequiredService<IHubContext<TransportHub>>());
-        
-        // Start the host
-        _host = app;
-        await _host.StartAsync();
+            var builder = WebApplication.CreateBuilder();
+            builder.Services.AddSignalR();
+            builder.WebHost.UseUrls(_url);
+
+            var app = builder.Build();
+
+            app.UseRouting();
+            app.MapHub<TransportHub>($"/{_hub}");
+
+            _publisher = new SignalRServerPublisher(app.Services.GetRequiredService<IHubContext<TransportHub>>());
+
+            _host = app;
+            await _host.StartAsync();
+        }
+        finally
+        {
+            _lifecycleLock.Release();
+        }
     }
 
     /// <summary>
@@ -125,23 +128,40 @@ public class SignalRHostManager : IDisposable
     }
 
     /// <summary>
-    /// Disposes the host manager and stops the SignalR host
+    /// Asynchronously disposes the host manager and stops the SignalR host
     /// </summary>
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        if (_isDisposed)
-            return;
+        await _lifecycleLock.WaitAsync();
+        try
+        {
+            if (_isDisposed)
+                return;
 
-        _isDisposed = true;
-        
+            _isDisposed = true;
+        }
+        finally
+        {
+            _lifecycleLock.Release();
+        }
+
         if (_host != null)
         {
-            _host.StopAsync().Wait();
-            _host.Dispose();
+            try
+            {
+                await _host.StopAsync();
+            }
+            finally
+            {
+                if (_host is IAsyncDisposable asyncDisposable)
+                    await asyncDisposable.DisposeAsync();
+                else
+                    _host.Dispose();
+            }
         }
-        
+
         (_publisher as IDisposable)?.Dispose();
-        
+
         GC.SuppressFinalize(this);
     }
 }
