@@ -57,7 +57,7 @@ static async Task RunServerAsync()
     {
         Console.WriteLine("Shutting down server...");
         discoveryService?.Dispose(); // Stop broadcasting and release resources
-        hostManager?.Dispose(); // Stop the web host
+        if (hostManager != null) await hostManager.DisposeAsync(); // Stop the web host
     }
 }
 

@@ -8,7 +8,7 @@ namespace Sanet.Transport.SignalR.Server.Infrastructure;
 /// <summary>
 /// Manages a self-contained SignalR host that can be embedded in any application
 /// </summary>
-public class SignalRHostManager : IDisposable
+public class SignalRHostManager : IAsyncDisposable
 {
     private IHost? _host;
     private readonly string _url;
@@ -125,23 +125,23 @@ public class SignalRHostManager : IDisposable
     }
 
     /// <summary>
-    /// Disposes the host manager and stops the SignalR host
+    /// Asynchronously disposes the host manager and stops the SignalR host
     /// </summary>
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         if (_isDisposed)
             return;
 
         _isDisposed = true;
-        
+
         if (_host != null)
         {
-            _host.StopAsync().Wait();
+            await _host.StopAsync();
             _host.Dispose();
         }
-        
+
         (_publisher as IDisposable)?.Dispose();
-        
+
         GC.SuppressFinalize(this);
     }
 }

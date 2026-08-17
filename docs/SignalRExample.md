@@ -71,10 +71,10 @@ namespace AvaloniaHostApp
             await _publisher.PublishMessage(message);
         }
         
-        public void Cleanup()
+        public async Task Cleanup()
         {
             _discoveryService?.Dispose();
-            _hostManager?.Dispose();
+            if (_hostManager != null) await _hostManager.DisposeAsync();
         }
     }
 }
