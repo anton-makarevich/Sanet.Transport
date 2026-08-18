@@ -183,7 +183,7 @@ public class RelayRoomClientTests
     [Theory]
     [InlineData("ready")]
     [InlineData("lock")]
-    public async Task ReadyAndClose_Success_SendsSessionTokenHeader(string operation)
+    public async Task ReadyAndLock_Success_SendsSessionTokenHeader(string operation)
     {
         _handler.StatusCode = HttpStatusCode.OK;
         _handler.ResponseContent = """{ "success": true, "error": null }""";
