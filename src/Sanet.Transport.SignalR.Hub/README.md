@@ -71,7 +71,7 @@ The container listens on `http://localhost:8080` in `Production` mode.
 | POST | `/api/rooms` | Create a room (requires `X-Api-Key` header) |
 | POST | `/api/rooms/{roomCode}/join` | Join a room by code (requires `X-Api-Key` header, rate-limited per IP) |
 | POST | `/api/rooms/{roomCode}/ready` | Mark a room ready to accept joiners (requires `X-Api-Key` + `Session-Token` header, host only) |
-| POST | `/api/rooms/{roomCode}/close` | Close a room (requires `X-Api-Key` + `Session-Token` header, host only) |
+| POST | `/api/rooms/{roomCode}/lock` | Lock a room — stop accepting new joiners (requires `X-Api-Key` + `Session-Token` header, host only) |
 | DELETE | `/api/rooms/{roomCode}/members/{playerId}` | Remove a member (requires `X-Api-Key` + `Session-Token` header, host only) |
 | WebSocket | `/hubs/relay` | SignalR hub for message relay (requires `sessionToken` query parameter) |
 

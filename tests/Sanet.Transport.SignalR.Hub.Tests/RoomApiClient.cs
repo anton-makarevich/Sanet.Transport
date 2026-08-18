@@ -55,13 +55,13 @@ internal static class RoomApiClient
         return await client.SendAsync(request);
     }
 
-    public static async Task<HttpResponseMessage> CloseRoom(
+    public static async Task<HttpResponseMessage> LockRoom(
         HttpClient client,
         string roomCode,
         string sessionToken,
         string? apiKey = HubApplicationFactory.ApiKey)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/rooms/{roomCode}/close");
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/rooms/{roomCode}/lock");
         request.Headers.Add("Session-Token", sessionToken);
         AddApiKey(request, apiKey);
         return await client.SendAsync(request);

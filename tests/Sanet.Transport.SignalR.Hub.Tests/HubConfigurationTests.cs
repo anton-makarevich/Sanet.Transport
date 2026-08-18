@@ -308,7 +308,7 @@ public class HubConfigurationTests
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/rooms/ABC234/close");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/rooms/ABC234/lock");
         if (sessionToken is not null)
         {
             request.Headers.Add("Session-Token", sessionToken);

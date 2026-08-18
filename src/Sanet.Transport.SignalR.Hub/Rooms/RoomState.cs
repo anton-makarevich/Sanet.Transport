@@ -4,5 +4,5 @@ public enum RoomState
 {
     Created,
     Active,
-    Closed
+    Locked
 }

@@ -9,17 +9,17 @@ namespace Sanet.Transport.SignalR.Hub.Tests.Rooms;
 public class RoomLifecycleEndpointTests
 {
     [Fact]
-    public async Task CloseRoom_ActiveRoom_ReturnsOkAndRejectsUnknownJoiners()
+    public async Task LockRoom_ActiveRoom_ReturnsOkAndRejectsUnknownJoiners()
     {
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
         var (roomCode, hostToken) = await CreateReadyRoomAsync(client);
 
-        using var closeResponse = await RoomApiClient.CloseRoom(client, roomCode, hostToken);
+        using var closeResponse = await RoomApiClient.LockRoom(client, roomCode, hostToken);
 
         closeResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
-        var closeResult = await closeResponse.Content.ReadFromJsonAsync<CloseResponse>(RoomApiClient.JsonOptions);
+        var closeResult = await closeResponse.Content.ReadFromJsonAsync<LockResponse>(RoomApiClient.JsonOptions);
         closeResult.ShouldNotBeNull();
         closeResult.Success.ShouldBeTrue();
         closeResult.Error.ShouldBeNull();
@@ -35,7 +35,7 @@ public class RoomLifecycleEndpointTests
     }
 
     [Fact]
-    public async Task CloseRoom_CreatedRoom_ReturnsConflictInvalidRoomState()
+    public async Task LockRoom_CreatedRoom_ReturnsConflictInvalidRoomState()
     {
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
@@ -44,14 +44,14 @@ public class RoomLifecycleEndpointTests
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
 
-        using var closeResponse = await RoomApiClient.CloseRoom(
+        using var closeResponse = await RoomApiClient.LockRoom(
             client,
             roomCode,
             createResult.SessionToken!);
 
         closeResponse.StatusCode.ShouldBe(HttpStatusCode.Conflict);
 
-        var result = await closeResponse.Content.ReadFromJsonAsync<CloseResponse>(RoomApiClient.JsonOptions);
+        var result = await closeResponse.Content.ReadFromJsonAsync<LockResponse>(RoomApiClient.JsonOptions);
         result.ShouldNotBeNull();
         result.Success.ShouldBeFalse();
         result.Error.ShouldNotBeNull();
@@ -64,16 +64,16 @@ public class RoomLifecycleEndpointTests
     }
 
     [Fact]
-    public async Task CloseRoom_NotFound_ReturnsNotFound()
+    public async Task LockRoom_NotFound_ReturnsNotFound()
     {
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
-        using var response = await RoomApiClient.CloseRoom(client, "NOEXIST", "any-token");
+        using var response = await RoomApiClient.LockRoom(client, "NOEXIST", "any-token");
 
         response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
 
-        var result = await response.Content.ReadFromJsonAsync<CloseResponse>(RoomApiClient.JsonOptions);
+        var result = await response.Content.ReadFromJsonAsync<LockResponse>(RoomApiClient.JsonOptions);
         result.ShouldNotBeNull();
         result.Success.ShouldBeFalse();
         result.Error.ShouldNotBeNull();
@@ -81,17 +81,17 @@ public class RoomLifecycleEndpointTests
     }
 
     [Fact]
-    public async Task CloseRoom_NonHost_ReturnsConflictAndLeavesRoomActive()
+    public async Task LockRoom_NonHost_ReturnsConflictAndLeavesRoomActive()
     {
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
         var (roomCode, _) = await CreateReadyRoomAsync(client);
 
-        using var closeResponse = await RoomApiClient.CloseRoom(client, roomCode, "not-the-host-token");
+        using var closeResponse = await RoomApiClient.LockRoom(client, roomCode, "not-the-host-token");
 
         closeResponse.StatusCode.ShouldBe(HttpStatusCode.Conflict);
-        var closeResult = await closeResponse.Content.ReadFromJsonAsync<CloseResponse>(RoomApiClient.JsonOptions);
+        var closeResult = await closeResponse.Content.ReadFromJsonAsync<LockResponse>(RoomApiClient.JsonOptions);
         closeResult!.Error!.Code.ShouldBe(HubErrorCode.NotHost);
 
         using var joinResponse = await RoomApiClient.JoinRoom(client, roomCode, sessionToken: null);
@@ -99,7 +99,7 @@ public class RoomLifecycleEndpointTests
     }
 
     [Fact]
-    public async Task JoinRoom_ClosedRoom_ExistingDeviceSession_Succeeds()
+    public async Task JoinRoom_LockedRoom_ExistingDeviceSession_Succeeds()
     {
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
@@ -111,7 +111,7 @@ public class RoomLifecycleEndpointTests
         var firstResult = await firstJoin.Content.ReadFromJsonAsync<JoinResponse>(RoomApiClient.JsonOptions);
         firstResult.ShouldNotBeNull();
 
-        using var closeResponse = await RoomApiClient.CloseRoom(client, roomCode, hostToken);
+        using var closeResponse = await RoomApiClient.LockRoom(client, roomCode, hostToken);
         closeResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
         using var rejoin = await RoomApiClient.JoinRoom(client, roomCode, firstResult.SessionToken);
@@ -149,7 +149,7 @@ public class RoomLifecycleEndpointTests
         result.Success.ShouldBeTrue();
         result.Error.ShouldBeNull();
 
-        using var closeResponse = await RoomApiClient.CloseRoom(client, roomCode, hostToken);
+        using var closeResponse = await RoomApiClient.LockRoom(client, roomCode, hostToken);
         closeResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
         using var rejoin = await RoomApiClient.JoinRoom(client, roomCode, joinResult.SessionToken);
@@ -278,12 +278,12 @@ public class RoomLifecycleEndpointTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    public async Task CloseRoom_EmptySessionToken_ReturnsValidationProblem(string? sessionToken)
+    public async Task LockRoom_EmptySessionToken_ReturnsValidationProblem(string? sessionToken)
     {
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/rooms/ABC234/close");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/rooms/ABC234/lock");
         if (sessionToken is not null)
         {
             request.Headers.Add("Session-Token", sessionToken);

@@ -182,15 +182,15 @@ public class RelayRoomClientTests
 
     [Theory]
     [InlineData("ready")]
-    [InlineData("close")]
-    public async Task ReadyAndClose_Success_SendsSessionTokenHeader(string operation)
+    [InlineData("lock")]
+    public async Task ReadyAndLock_Success_SendsSessionTokenHeader(string operation)
     {
         _handler.StatusCode = HttpStatusCode.OK;
         _handler.ResponseContent = """{ "success": true, "error": null }""";
 
         var result = operation == "ready"
             ? await _sut.Ready("ABCDEF", SessionToken)
-            : await _sut.Close("ABCDEF", SessionToken);
+            : await _sut.Lock("ABCDEF", SessionToken);
 
         result.Success.ShouldBeTrue();
         result.Error.ShouldBeNull();
@@ -946,11 +946,11 @@ public class RelayRoomClientTests
     }
 
     [Fact]
-    public async Task CloseAsync_NetworkFailure_MapsToNetworkError()
+    public async Task LockAsync_NetworkFailure_MapsToNetworkError()
     {
         _handler.ThrowException = new HttpRequestException("connection refused");
 
-        var result = await _sut.Close("ABCDEF", SessionToken);
+        var result = await _sut.Lock("ABCDEF", SessionToken);
 
         result.Success.ShouldBeFalse();
         result.Error!.Code.ShouldBe(RelayClientErrorCode.NetworkError);
@@ -958,11 +958,11 @@ public class RelayRoomClientTests
     }
 
     [Fact]
-    public async Task CloseAsync_Timeout_MapsToTimeout()
+    public async Task LockAsync_Timeout_MapsToTimeout()
     {
         _handler.ThrowException = new TaskCanceledException("timed out");
 
-        var result = await _sut.Close("ABCDEF", SessionToken);
+        var result = await _sut.Lock("ABCDEF", SessionToken);
 
         result.Success.ShouldBeFalse();
         result.Error!.Code.ShouldBe(RelayClientErrorCode.Timeout);
@@ -970,12 +970,12 @@ public class RelayRoomClientTests
     }
 
     [Fact]
-    public async Task CloseAsync_InvalidJson_MapsToDeserializationError()
+    public async Task LockAsync_InvalidJson_MapsToDeserializationError()
     {
         _handler.StatusCode = HttpStatusCode.OK;
         _handler.ResponseContent = "{ not-json";
 
-        var result = await _sut.Close("ABCDEF", SessionToken);
+        var result = await _sut.Lock("ABCDEF", SessionToken);
 
         result.Success.ShouldBeFalse();
         result.Error!.Code.ShouldBe(RelayClientErrorCode.DeserializationError);
@@ -1143,7 +1143,7 @@ public class RelayRoomClientTests
     }
 
     [Fact]
-    public async Task ReadyAsync_CloseAsync_OperationCanceled_Rethrows()
+    public async Task ReadyAsync_LockAsync_OperationCanceled_Rethrows()
     {
         var cts = new CancellationTokenSource();
         await cts.CancelAsync();
@@ -1152,7 +1152,7 @@ public class RelayRoomClientTests
             _sut.Ready("ABCDEF", SessionToken, cts.Token));
 
         await Should.ThrowAsync<OperationCanceledException>(() =>
-            _sut.Close("ABCDEF", SessionToken, cts.Token));
+            _sut.Lock("ABCDEF", SessionToken, cts.Token));
     }
 
     [Fact]
@@ -1173,11 +1173,11 @@ public class RelayRoomClientTests
     }
 
     [Fact]
-    public void DeserializeCloseResponse_FromJson_ParsesSuccessfully()
+    public void DeserializeLockResponse_FromJson_ParsesSuccessfully()
     {
         const string json = """{ "success": true, "error": null }""";
         var opts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true };
-        var response = JsonSerializer.Deserialize<CloseResponse>(json, opts);
+        var response = JsonSerializer.Deserialize<LockResponse>(json, opts);
 
         response.ShouldNotBeNull();
         response.Success.ShouldBeTrue();
@@ -1185,12 +1185,12 @@ public class RelayRoomClientTests
     }
 
     [Fact]
-    public void DeserializeCloseResponse_WithError_ParsesError()
+    public void DeserializeLockResponse_WithError_ParsesError()
     {
         const string json = """{ "success": false, "error": { "code": "RoomNotFound", "message": "not found" } }""";
         var opts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true };
         opts.Converters.Add(new JsonStringEnumConverter());
-        var response = JsonSerializer.Deserialize<CloseResponse>(json, opts);
+        var response = JsonSerializer.Deserialize<LockResponse>(json, opts);
 
         response.ShouldNotBeNull();
         response.Success.ShouldBeFalse();
