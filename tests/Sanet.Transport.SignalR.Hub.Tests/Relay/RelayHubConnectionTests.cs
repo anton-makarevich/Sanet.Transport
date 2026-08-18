@@ -159,14 +159,14 @@ public class RelayHubConnectionTests
     }
 
     [Fact]
-    public async Task Connect_WithValidClosedRoomRelayTicket_IsAccepted()
+    public async Task Connect_WithValidLockedRoomRelayTicket_IsAccepted()
     {
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
         var host = await CreateReadyHostAsync(client);
 
-        using var closeResponse = await RoomApiClient.CloseRoom(client, host.RoomCode, host.SessionToken);
+        using var closeResponse = await RoomApiClient.LockRoom(client, host.RoomCode, host.SessionToken);
         closeResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
         await using var connection = factory.CreateRelayHubConnection(host.Ticket);
@@ -211,7 +211,7 @@ public class RelayHubConnectionTests
         await using var connection = factory.CreateRelayHubConnection(host.Ticket);
         await connection.StartAsync();
 
-        foreach (var methodName in new[] { "CreateRoom", "JoinRoom", "MarkReady", "CloseRoom", "RemoveMember" })
+        foreach (var methodName in new[] { "CreateRoom", "JoinRoom", "MarkReady", "LockRoom", "RemoveMember" })
         {
             var exception = await Should.ThrowAsync<HubException>(
                 async () => await connection.InvokeAsync(methodName));

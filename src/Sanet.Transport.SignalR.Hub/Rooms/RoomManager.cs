@@ -166,10 +166,10 @@ public sealed class RoomManager : IRoomManager
                 return RoomJoinResult.NotReady();
             }
 
-            if (room.State == RoomState.Closed)
+            if (room.State == RoomState.Locked)
             {
                 _logger.LogWarning(
-                    "Join rejected for room {RoomCode}: room is closed and is not accepting new devices",
+                    "Join rejected for room {RoomCode}: room is locked and is not accepting new devices",
                     roomCode);
                 return RoomJoinResult.Full();
             }
@@ -231,7 +231,7 @@ public sealed class RoomManager : IRoomManager
         }
     }
 
-    public RoomCloseResult CloseRoom(string roomCode, string sessionToken)
+    public RoomLockResult LockRoom(string roomCode, string sessionToken)
     {
         lock (_sync)
         {
@@ -239,33 +239,33 @@ public sealed class RoomManager : IRoomManager
 
             if (!_rooms.TryGetValue(roomCode, out var room))
             {
-                _logger.LogWarning("Close failed for room {RoomCode}: room not found", roomCode);
-                return RoomCloseResult.NotFound();
+                _logger.LogWarning("Lock failed for room {RoomCode}: room not found", roomCode);
+                return RoomLockResult.NotFound();
             }
 
             if (room.IsExpiredAt(now))
             {
-                _logger.LogWarning("Close failed for room {RoomCode}: room expired", roomCode);
-                return RoomCloseResult.Expired();
+                _logger.LogWarning("Lock failed for room {RoomCode}: room expired", roomCode);
+                return RoomLockResult.Expired();
             }
 
             if (!room.ValidateHostSession(sessionToken, now))
             {
-                _logger.LogWarning("Close failed for room {RoomCode}: caller is not the host", roomCode);
-                return RoomCloseResult.NotHost();
+                _logger.LogWarning("Lock failed for room {RoomCode}: caller is not the host", roomCode);
+                return RoomLockResult.NotHost();
             }
 
-            if (!room.Close(now, _roomTtl))
+            if (!room.Lock(now, _roomTtl))
             {
                 _logger.LogWarning(
-                    "Close failed for room {RoomCode}: room is in state {RoomState}",
+                    "Lock failed for room {RoomCode}: room is in state {RoomState}",
                     roomCode,
                     room.State);
-                return RoomCloseResult.InvalidState();
+                return RoomLockResult.InvalidState();
             }
 
-            _logger.LogInformation("Room {RoomCode} closed", roomCode);
-            return RoomCloseResult.Closed();
+            _logger.LogInformation("Room {RoomCode} locked", roomCode);
+            return RoomLockResult.Locked();
         }
     }
 

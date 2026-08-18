@@ -228,16 +228,16 @@ public sealed class Room
     }
 
     /// <summary>
-    /// Transitions Active → Closed. Returns false when the room is not in Active.
+    /// Transitions Active → Locked. Returns false when the room is not in Active.
     /// </summary>
-    internal bool Close(DateTimeOffset now, TimeSpan ttl)
+    internal bool Lock(DateTimeOffset now, TimeSpan ttl)
     {
         if (State != RoomState.Active)
         {
             return false;
         }
 
-        State = RoomState.Closed;
+        State = RoomState.Locked;
         Touch(now, ttl);
         return true;
     }

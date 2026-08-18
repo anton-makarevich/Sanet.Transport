@@ -181,14 +181,14 @@ public sealed class RelayRoomClient : IRelayRoomClient
             cancellationToken,
             options);
 
-    public Task<RoomOperationResult> Close(
+    public Task<RoomOperationResult> Lock(
         string roomCode,
         string sessionToken,
         CancellationToken cancellationToken = default,
         RelayClientOptions? options = null) =>
         SendAckAsync(
             HttpMethod.Post,
-            $"api/rooms/{Uri.EscapeDataString(roomCode)}/close",
+            $"api/rooms/{Uri.EscapeDataString(roomCode)}/lock",
             roomCode,
             sessionToken,
             cancellationToken,
@@ -382,7 +382,7 @@ public sealed class RelayRoomClient : IRelayRoomClient
             return RoomOperationResult.Failed(specialError);
         }
 
-        // Ready and Close share the same Success/Error shape.
+        // Ready and Lock share the same Success/Error shape.
         var payload = DeserializeOrNull<ReadyResponse>(body);
         if (payload is null)
         {

@@ -9,7 +9,7 @@ public interface IRoomManager
     RoomCreationResult CreateRoom(Guid hostGameId);
     RoomJoinResult JoinRoom(string roomCode, string? sessionToken);
     RoomReadyResult MarkRoomReady(string roomCode, string sessionToken);
-    RoomCloseResult CloseRoom(string roomCode, string sessionToken);
+    RoomLockResult LockRoom(string roomCode, string sessionToken);
     RoomRemoveMemberResult RemoveMember(string roomCode, string sessionToken, Guid targetDeviceSessionId);
     string? RegisterConnection(string roomCode, Guid deviceSessionId, string connectionId);
     bool UnregisterConnection(string roomCode, Guid deviceSessionId, string connectionId);

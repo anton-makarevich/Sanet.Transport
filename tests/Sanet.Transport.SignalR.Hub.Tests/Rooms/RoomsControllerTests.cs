@@ -139,83 +139,83 @@ public class RoomsControllerTests
     }
 
     [Fact]
-    public void CloseRoom_ValidRequest_ReturnsOk()
+    public void LockRoom_ValidRequest_ReturnsOk()
     {
         SetSessionTokenHeader(SessionToken);
-        _roomManager.CloseRoom(RoomCode, SessionToken)
-            .Returns(RoomCloseResult.Closed());
+        _roomManager.LockRoom(RoomCode, SessionToken)
+            .Returns(RoomLockResult.Locked());
 
-        var result = _sut.CloseRoom(RoomCode);
+        var result = _sut.LockRoom(RoomCode);
 
         var ok = result.Result.ShouldBeOfType<OkObjectResult>();
-        var response = ok.Value.ShouldBeOfType<CloseResponse>();
+        var response = ok.Value.ShouldBeOfType<LockResponse>();
         response.Success.ShouldBeTrue();
     }
 
     [Fact]
-    public void CloseRoom_MissingSessionToken_ReturnsValidationProblem()
+    public void LockRoom_MissingSessionToken_ReturnsValidationProblem()
     {
-        var result = _sut.CloseRoom(RoomCode);
+        var result = _sut.LockRoom(RoomCode);
 
         result.Result.ShouldBeOfType<BadRequestObjectResult>();
     }
 
     [Fact]
-    public void CloseRoom_RoomNotFound_ReturnsNotFound()
+    public void LockRoom_RoomNotFound_ReturnsNotFound()
     {
         SetSessionTokenHeader(SessionToken);
-        _roomManager.CloseRoom(RoomCode, SessionToken)
-            .Returns(RoomCloseResult.NotFound());
+        _roomManager.LockRoom(RoomCode, SessionToken)
+            .Returns(RoomLockResult.NotFound());
 
-        var result = _sut.CloseRoom(RoomCode);
+        var result = _sut.LockRoom(RoomCode);
 
         var notFound = result.Result.ShouldBeOfType<NotFoundObjectResult>();
-        var response = notFound.Value.ShouldBeOfType<CloseResponse>();
+        var response = notFound.Value.ShouldBeOfType<LockResponse>();
         response.Success.ShouldBeFalse();
         response.Error!.Code.ShouldBe(HubErrorCode.RoomNotFound);
     }
 
     [Fact]
-    public void CloseRoom_RoomExpired_ReturnsConflict()
+    public void LockRoom_RoomExpired_ReturnsConflict()
     {
         SetSessionTokenHeader(SessionToken);
-        _roomManager.CloseRoom(RoomCode, SessionToken)
-            .Returns(RoomCloseResult.Expired());
+        _roomManager.LockRoom(RoomCode, SessionToken)
+            .Returns(RoomLockResult.Expired());
 
-        var result = _sut.CloseRoom(RoomCode);
+        var result = _sut.LockRoom(RoomCode);
 
         var conflict = result.Result.ShouldBeOfType<ConflictObjectResult>();
-        var response = conflict.Value.ShouldBeOfType<CloseResponse>();
+        var response = conflict.Value.ShouldBeOfType<LockResponse>();
         response.Success.ShouldBeFalse();
         response.Error!.Code.ShouldBe(HubErrorCode.RoomExpired);
     }
 
     [Fact]
-    public void CloseRoom_NotHost_ReturnsConflict()
+    public void LockRoom_NotHost_ReturnsConflict()
     {
         SetSessionTokenHeader(SessionToken);
-        _roomManager.CloseRoom(RoomCode, SessionToken)
-            .Returns(RoomCloseResult.NotHost());
+        _roomManager.LockRoom(RoomCode, SessionToken)
+            .Returns(RoomLockResult.NotHost());
 
-        var result = _sut.CloseRoom(RoomCode);
+        var result = _sut.LockRoom(RoomCode);
 
         var conflict = result.Result.ShouldBeOfType<ConflictObjectResult>();
-        var response = conflict.Value.ShouldBeOfType<CloseResponse>();
+        var response = conflict.Value.ShouldBeOfType<LockResponse>();
         response.Success.ShouldBeFalse();
         response.Error!.Code.ShouldBe(HubErrorCode.NotHost);
     }
 
     [Fact]
-    public void CloseRoom_InvalidRoomState_ReturnsConflict()
+    public void LockRoom_InvalidRoomState_ReturnsConflict()
     {
         SetSessionTokenHeader(SessionToken);
-        _roomManager.CloseRoom(RoomCode, SessionToken)
-            .Returns(RoomCloseResult.InvalidState());
+        _roomManager.LockRoom(RoomCode, SessionToken)
+            .Returns(RoomLockResult.InvalidState());
 
-        var result = _sut.CloseRoom(RoomCode);
+        var result = _sut.LockRoom(RoomCode);
 
         var conflict = result.Result.ShouldBeOfType<ConflictObjectResult>();
-        var response = conflict.Value.ShouldBeOfType<CloseResponse>();
+        var response = conflict.Value.ShouldBeOfType<LockResponse>();
         response.Success.ShouldBeFalse();
         response.Error!.Code.ShouldBe(HubErrorCode.InvalidRoomState);
     }
@@ -435,16 +435,16 @@ public class RoomsControllerTests
     }
 
     [Fact]
-    public void CloseRoom_UnhandledOutcome_ReturnsConflictWithDefaultError()
+    public void LockRoom_UnhandledOutcome_ReturnsConflictWithDefaultError()
     {
         SetSessionTokenHeader(SessionToken);
-        _roomManager.CloseRoom(RoomCode, SessionToken)
-            .Returns(new RoomCloseResult((RoomCloseOutcome)999));
+        _roomManager.LockRoom(RoomCode, SessionToken)
+            .Returns(new RoomLockResult((RoomLockOutcome)999));
 
-        var result = _sut.CloseRoom(RoomCode);
+        var result = _sut.LockRoom(RoomCode);
 
         var conflict = result.Result.ShouldBeOfType<ConflictObjectResult>();
-        var response = conflict.Value.ShouldBeOfType<CloseResponse>();
+        var response = conflict.Value.ShouldBeOfType<LockResponse>();
         response.Success.ShouldBeFalse();
         response.Error!.Code.ShouldBe(HubErrorCode.InvalidRoomState);
     }
@@ -505,13 +505,13 @@ public class RoomsControllerTests
     }
 
     [Fact]
-    public void CloseRoom_NotHost_LogsWarning()
+    public void LockRoom_NotHost_LogsWarning()
     {
         SetSessionTokenHeader(SessionToken);
-        _roomManager.CloseRoom(RoomCode, SessionToken)
-            .Returns(RoomCloseResult.NotHost());
+        _roomManager.LockRoom(RoomCode, SessionToken)
+            .Returns(RoomLockResult.NotHost());
 
-        _sut.CloseRoom(RoomCode);
+        _sut.LockRoom(RoomCode);
 
         _logger.GetMessages(LogLevel.Warning).ShouldContain(
             message => message.Contains("failed: NotHost", StringComparison.Ordinal));

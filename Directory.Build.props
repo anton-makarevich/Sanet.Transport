@@ -6,7 +6,7 @@
              The .NET SDK version is pinned in /global.json. -->
         <Deterministic>true</Deterministic>
         <ContinuousIntegrationBuild Condition="'$(ContinuousIntegrationBuild)' == '' and '$(CI)' == 'true'">true</ContinuousIntegrationBuild>
-        <Version>1.4.1</Version>
+        <Version>1.4.2</Version>
         <Authors>Anton Makarevich</Authors>
         <Company>Anton Makarevich</Company>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>

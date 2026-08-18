@@ -126,7 +126,7 @@ public sealed class RoomsController(
             RoomJoinOutcome.RoomNotFound => (HubErrorCode.RoomNotFound, "The specified room was not found."),
             RoomJoinOutcome.RoomExpired => (HubErrorCode.RoomExpired, "The specified room has expired."),
             RoomJoinOutcome.HostNotReady => (HubErrorCode.HostNotReady, "The room host is not ready to accept joiners."),
-            RoomJoinOutcome.RoomFull => (HubErrorCode.RoomFull, "The room is closed and is not accepting new devices."),
+            RoomJoinOutcome.RoomFull => (HubErrorCode.RoomFull, "The room is locked and is not accepting new devices."),
             RoomJoinOutcome.Forbidden => (HubErrorCode.NotHost, "The session token does not authorize this operation."),
             _ => (HubErrorCode.RoomNotFound, "The specified room was not found.")
         };
@@ -186,17 +186,17 @@ public sealed class RoomsController(
         return new ReadyResponse(Success: false, Error: new HubError(errorCode, message));
     }
 
-    [HttpPost("{roomCode}/close")]
-    [ProducesResponseType<CloseResponse>(StatusCodes.Status200OK)]
+    [HttpPost("{roomCode}/lock")]
+    [ProducesResponseType<LockResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<CloseResponse>(StatusCodes.Status404NotFound)]
-    [ProducesResponseType<CloseResponse>(StatusCodes.Status409Conflict)]
-    public ActionResult<CloseResponse> CloseRoom(string roomCode)
+    [ProducesResponseType<LockResponse>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<LockResponse>(StatusCodes.Status409Conflict)]
+    public ActionResult<LockResponse> LockRoom(string roomCode)
     {
         if (!TryGetSessionToken(out var sessionToken))
         {
             logger.LogWarning(
-                "Close request for room {RoomCode} rejected: Session-Token header is required",
+                "Lock request for room {RoomCode} rejected: Session-Token header is required",
                 roomCode);
             return ValidationProblem(new ValidationProblemDetails(
                 new Dictionary<string, string[]>
@@ -205,33 +205,33 @@ public sealed class RoomsController(
                 }));
         }
 
-        var result = roomManager.CloseRoom(roomCode, sessionToken);
+        var result = roomManager.LockRoom(roomCode, sessionToken);
 
         return result.Outcome switch
         {
-            RoomCloseOutcome.Closed => Ok(LogCloseSuccess(roomCode)),
-            RoomCloseOutcome.RoomNotFound => NotFound(LogCloseFailure(result.Outcome, roomCode)),
-            _ => Conflict(LogCloseFailure(result.Outcome, roomCode))
+            RoomLockOutcome.Locked => Ok(LogLockSuccess(roomCode)),
+            RoomLockOutcome.RoomNotFound => NotFound(LogLockFailure(result.Outcome, roomCode)),
+            _ => Conflict(LogLockFailure(result.Outcome, roomCode))
         };
     }
 
-    private CloseResponse LogCloseSuccess(string roomCode)
+    private LockResponse LogLockSuccess(string roomCode)
     {
-        logger.LogInformation("Room {RoomCode} closed", roomCode);
-        return new CloseResponse(Success: true, Error: null);
+        logger.LogInformation("Room {RoomCode} locked", roomCode);
+        return new LockResponse(Success: true, Error: null);
     }
 
-    private CloseResponse LogCloseFailure(RoomCloseOutcome outcome, string roomCode)
+    private LockResponse LogLockFailure(RoomLockOutcome outcome, string roomCode)
     {
-        logger.LogWarning("Close request for room {RoomCode} failed: {Outcome}", roomCode, outcome);
+        logger.LogWarning("Lock request for room {RoomCode} failed: {Outcome}", roomCode, outcome);
         var (errorCode, message) = outcome switch
         {
-            RoomCloseOutcome.RoomNotFound => (HubErrorCode.RoomNotFound, "The specified room was not found."),
-            RoomCloseOutcome.RoomExpired => (HubErrorCode.RoomExpired, "The specified room has expired."),
-            RoomCloseOutcome.NotHost => (HubErrorCode.NotHost, "Only the host can close a room."),
-            _ => (HubErrorCode.InvalidRoomState, "The room is not in a state that can be closed.")
+            RoomLockOutcome.RoomNotFound => (HubErrorCode.RoomNotFound, "The specified room was not found."),
+            RoomLockOutcome.RoomExpired => (HubErrorCode.RoomExpired, "The specified room has expired."),
+            RoomLockOutcome.NotHost => (HubErrorCode.NotHost, "Only the host can lock a room."),
+            _ => (HubErrorCode.InvalidRoomState, "The room is not in a state that can be locked.")
         };
-        return new CloseResponse(Success: false, Error: new HubError(errorCode, message));
+        return new LockResponse(Success: false, Error: new HubError(errorCode, message));
     }
 
     [HttpDelete("{roomCode}/members/{deviceSessionId:guid}")]

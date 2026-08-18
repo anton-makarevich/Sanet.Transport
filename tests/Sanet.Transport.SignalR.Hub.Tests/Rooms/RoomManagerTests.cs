@@ -291,30 +291,30 @@ public class RoomManagerTests
     }
 
     [Fact]
-    public void CloseRoom_ActiveRoom_TransitionsToClosed()
+    public void LockRoom_ActiveRoom_TransitionsToLocked()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
         var createResult = manager.CreateRoom(Guid.NewGuid());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
-        var result = manager.CloseRoom("ABC234", createResult.Session.Token);
+        var result = manager.LockRoom("ABC234", createResult.Session.Token);
 
-        result.Outcome.ShouldBe(RoomCloseOutcome.Closed);
-        createResult.Room!.State.ShouldBe(RoomState.Closed);
+        result.Outcome.ShouldBe(RoomLockOutcome.Locked);
+        createResult.Room!.State.ShouldBe(RoomState.Locked);
     }
 
     [Fact]
-    public void CloseRoom_NotFound_ReturnsNotFound()
+    public void LockRoom_NotFound_ReturnsNotFound()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
 
-        var result = manager.CloseRoom("NOEXIST", "any-token");
+        var result = manager.LockRoom("NOEXIST", "any-token");
 
-        result.Outcome.ShouldBe(RoomCloseOutcome.RoomNotFound);
+        result.Outcome.ShouldBe(RoomLockOutcome.RoomNotFound);
     }
 
     [Fact]
-    public void CloseRoom_ExpiredRoom_ReturnsExpired()
+    public void LockRoom_ExpiredRoom_ReturnsExpired()
     {
         var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
         var timeProvider = new FixedTimeProvider(now);
@@ -327,67 +327,67 @@ public class RoomManagerTests
 
         timeProvider.Advance(TimeSpan.FromSeconds(DefaultRoomTtlSeconds).Add(TimeSpan.FromMinutes(1)));
 
-        var result = manager.CloseRoom("ABC234", createResult.Session.Token);
+        var result = manager.LockRoom("ABC234", createResult.Session.Token);
 
-        result.Outcome.ShouldBe(RoomCloseOutcome.RoomExpired);
+        result.Outcome.ShouldBe(RoomLockOutcome.RoomExpired);
     }
 
     [Fact]
-    public void CloseRoom_NonHost_ReturnsNotHost()
+    public void LockRoom_NonHost_ReturnsNotHost()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
         var createResult = manager.CreateRoom(Guid.NewGuid());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
-        var result = manager.CloseRoom("ABC234", "not-the-host-token");
+        var result = manager.LockRoom("ABC234", "not-the-host-token");
 
-        result.Outcome.ShouldBe(RoomCloseOutcome.NotHost);
+        result.Outcome.ShouldBe(RoomLockOutcome.NotHost);
         createResult.Room!.State.ShouldBe(RoomState.Active);
     }
 
     [Fact]
-    public void CloseRoom_WhenRoomNotActive_ReturnsInvalidRoomState()
+    public void LockRoom_WhenRoomNotActive_ReturnsInvalidRoomState()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
         var createResult = manager.CreateRoom(Guid.NewGuid());
 
-        var result = manager.CloseRoom("ABC234", createResult.Session!.Token);
+        var result = manager.LockRoom("ABC234", createResult.Session!.Token);
 
-        result.Outcome.ShouldBe(RoomCloseOutcome.InvalidRoomState);
+        result.Outcome.ShouldBe(RoomLockOutcome.InvalidRoomState);
         createResult.Room!.State.ShouldBe(RoomState.Created);
     }
 
     [Fact]
-    public void JoinRoom_ClosedRoom_NewDevice_ReturnsRoomFull()
+    public void JoinRoom_LockedRoom_NewDevice_ReturnsRoomFull()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
         var createResult = manager.CreateRoom(Guid.NewGuid());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
-        manager.CloseRoom("ABC234", createResult.Session.Token);
+        manager.LockRoom("ABC234", createResult.Session.Token);
 
         var result = manager.JoinRoom("ABC234", sessionToken: null);
 
         result.Outcome.ShouldBe(RoomJoinOutcome.RoomFull);
-        createResult.Room!.State.ShouldBe(RoomState.Closed);
+        createResult.Room!.State.ShouldBe(RoomState.Locked);
         createResult.Room.Members.Count.ShouldBe(1);
     }
 
     [Fact]
-    public void JoinRoom_ClosedRoom_ExistingDeviceSession_ReturnsJoined()
+    public void JoinRoom_LockedRoom_ExistingDeviceSession_ReturnsJoined()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
         var createResult = manager.CreateRoom(Guid.NewGuid());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
         var joined = manager.JoinRoom("ABC234", sessionToken: null);
-        manager.CloseRoom("ABC234", createResult.Session!.Token);
+        manager.LockRoom("ABC234", createResult.Session!.Token);
 
         var result = manager.JoinRoom("ABC234", sessionToken: joined.Session!.Token);
 
         result.Outcome.ShouldBe(RoomJoinOutcome.Joined);
         result.Session.ShouldNotBeNull();
         result.Session!.DeviceSessionId.ShouldBe(joined.Session.DeviceSessionId);
-        createResult.Room!.State.ShouldBe(RoomState.Closed);
+        createResult.Room!.State.ShouldBe(RoomState.Locked);
     }
 
     [Fact]
@@ -653,12 +653,12 @@ public class RoomManagerTests
     }
 
     [Fact]
-    public void AuthenticateSession_WithClosedRoomToken_ReturnsBoundSession()
+    public void AuthenticateSession_WithLockedRoomToken_ReturnsBoundSession()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
         var created = manager.CreateRoom(Guid.NewGuid());
         manager.MarkRoomReady("ABC234", created.Session!.Token);
-        manager.CloseRoom("ABC234", created.Session.Token);
+        manager.LockRoom("ABC234", created.Session.Token);
 
         manager.AuthenticateSession(created.Session.Token).ShouldBe(created.Session);
     }
@@ -830,19 +830,19 @@ public class RoomManagerTests
     [Theory]
     [InlineData(RoomState.Created)]
     [InlineData(RoomState.Active)]
-    [InlineData(RoomState.Closed)]
+    [InlineData(RoomState.Locked)]
     public void AuthenticateSession_RoomInAnyState_ExpiresAfterTwoHours(RoomState state)
     {
         var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero));
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), timeProvider: timeProvider);
         var created = manager.CreateRoom(Guid.NewGuid());
-        if (state is RoomState.Active or RoomState.Closed)
+        if (state is RoomState.Active or RoomState.Locked)
         {
             manager.MarkRoomReady("ABC234", created.Session!.Token);
         }
-        if (state is RoomState.Closed)
+        if (state is RoomState.Locked)
         {
-            manager.CloseRoom("ABC234", created.Session!.Token);
+            manager.LockRoom("ABC234", created.Session!.Token);
         }
 
         timeProvider.Advance(TimeSpan.FromSeconds(DefaultRoomTtlSeconds));

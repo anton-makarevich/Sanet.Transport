@@ -1,7 +1,7 @@
 namespace Sanet.Transport.SignalR.Client.Relay;
 
 /// <summary>
-/// Generic ack result for Ready, Close, and RemoveMember operations.
+/// Generic ack result for Ready, Lock, and RemoveMember operations.
 /// </summary>
 public sealed record RoomOperationResult(
     bool Success,

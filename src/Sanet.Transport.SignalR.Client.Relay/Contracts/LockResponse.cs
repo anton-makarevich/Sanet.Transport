@@ -1,8 +1,8 @@
 namespace Sanet.Transport.SignalR.Client.Relay.Contracts;
 
 /// <summary>
-/// Wire DTO returned by <c>POST api/rooms/{code}/close</c>.
+/// Wire DTO returned by <c>POST api/rooms/{code}/lock</c>.
 /// </summary>
-public sealed record CloseResponse(
+public sealed record LockResponse(
     bool Success,
     HubError? Error);
