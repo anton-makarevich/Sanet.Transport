@@ -29,6 +29,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Sanet.Transport.SignalR.Client.Relay\Sanet.Transport.SignalR.Client.Relay.csproj" />
+    <ProjectReference Include="..\..\src\Sanet.Transport.Relay.Contracts\Sanet.Transport.Relay.Contracts.csproj" />
   </ItemGroup>
 
 </Project>

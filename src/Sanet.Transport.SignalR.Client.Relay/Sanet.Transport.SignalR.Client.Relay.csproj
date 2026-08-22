@@ -18,7 +18,17 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.10" />
-    <ProjectReference Include="..\Sanet.Transport.Relay.Contracts\Sanet.Transport.Relay.Contracts.csproj" />
+    <!-- Contracts is internal: DLL ships inside this package instead of being
+         a NuGet dependency (PrivateAssets keeps it out of the nuspec deps). -->
+    <ProjectReference Include="..\Sanet.Transport.Relay.Contracts\Sanet.Transport.Relay.Contracts.csproj"
+                      PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="$(OutputPath)Sanet.Transport.Relay.Contracts.dll"
+          Pack="true"
+          PackagePath="lib\$(TargetFramework)\"
+          Visible="false" />
   </ItemGroup>
 
 </Project>

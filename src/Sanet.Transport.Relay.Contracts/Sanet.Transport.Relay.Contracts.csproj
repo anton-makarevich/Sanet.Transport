@@ -4,7 +4,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <IsPackable>true</IsPackable>
+    <!-- Internal shared library: DTOs are embedded in consuming packages
+         (Sanet.Transport.SignalR.Client.Relay), never published as its own NuGet. -->
+    <IsPackable>false</IsPackable>
     <RootNamespace>Sanet.Transport.Relay.Contracts</RootNamespace>
     <AssemblyName>Sanet.Transport.Relay.Contracts</AssemblyName>
 

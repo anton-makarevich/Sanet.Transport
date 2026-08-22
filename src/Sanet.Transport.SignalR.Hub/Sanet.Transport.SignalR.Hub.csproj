@@ -13,10 +13,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Sanet.Transport.Relay.Contracts\Sanet.Transport.Relay.Contracts.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Sanet.Transport.SignalR.Client" Version="1.3.0" />
+    <ProjectReference Include="..\Sanet.Transport.SignalR.Client\Sanet.Transport.SignalR.Client.csproj" />
   </ItemGroup>
 
 </Project>
