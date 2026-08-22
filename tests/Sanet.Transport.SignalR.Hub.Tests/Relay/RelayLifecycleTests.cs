@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Sanet.Transport.SignalR.Client.Relay;
-using Sanet.Transport.SignalR.Hub.Contracts;
+using Sanet.Transport.Relay.Contracts;
 using Sanet.Transport.SignalR.Hub.Relay;
 using Sanet.Transport.SignalR.Hub.Security;
 using Shouldly;

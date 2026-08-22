@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Sanet.Transport.SignalR.Client.Relay;
-using Sanet.Transport.SignalR.Client.Relay.Contracts;
+using Sanet.Transport.Relay.Contracts;
 using Shouldly;
 
 namespace Sanet.Transport.SignalR.Client.Relay.Tests;

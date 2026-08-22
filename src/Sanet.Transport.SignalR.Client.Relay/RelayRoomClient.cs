@@ -3,7 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
-using Sanet.Transport.SignalR.Client.Relay.Contracts;
+using Sanet.Transport.Relay.Contracts;
 
 namespace Sanet.Transport.SignalR.Client.Relay;
 

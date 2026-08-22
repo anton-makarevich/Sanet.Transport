@@ -1,6 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
-using Sanet.Transport.SignalR.Hub.Contracts;
+using Sanet.Transport.Relay.Contracts;
 using Shouldly;
 
 namespace Sanet.Transport.SignalR.Hub.Tests.Rooms;

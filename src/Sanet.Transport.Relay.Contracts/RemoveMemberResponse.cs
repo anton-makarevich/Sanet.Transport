@@ -1,4 +1,4 @@
-namespace Sanet.Transport.SignalR.Client.Relay.Contracts;
+namespace Sanet.Transport.Relay.Contracts;
 
 /// <summary>
 /// Wire DTO returned by <c>DELETE api/rooms/{code}/members/{playerId}</c>.

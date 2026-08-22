@@ -1,8 +1,9 @@
-namespace Sanet.Transport.SignalR.Client.Relay.Contracts;
+namespace Sanet.Transport.Relay.Contracts;
 
 /// <summary>
-/// Wire enum mirroring the Hub REST error codes. Serialized as string names via
-/// <see cref="System.Text.Json.Serialization.JsonStringEnumConverter"/>.
+/// Shared relay error code used by both the REST and SignalR transports. Serialized as string names via
+/// <see cref="System.Text.Json.Serialization.JsonStringEnumConverter"/>; values are pinned
+/// so both Hub and clients stay in sync even if names are reordered.
 /// </summary>
 public enum HubErrorCode
 {

@@ -9,10 +9,12 @@ WORKDIR /src
 
 # Copy SDK pinning and shared build props so they are honored inside the container
 COPY ["global.json", "Directory.Build.props", "./"]
+COPY ["src/Sanet.Transport.Relay.Contracts/Sanet.Transport.Relay.Contracts.csproj", "Sanet.Transport.Relay.Contracts/"]
 COPY ["src/Sanet.Transport.SignalR.Hub/Sanet.Transport.SignalR.Hub.csproj", "Sanet.Transport.SignalR.Hub/"]
 RUN dotnet restore "Sanet.Transport.SignalR.Hub/Sanet.Transport.SignalR.Hub.csproj"
 
-# Copy the rest of the Hub source code
+# Copy the Contracts project source (referenced by the Hub) and the rest of the Hub source code
+COPY ["src/Sanet.Transport.Relay.Contracts/", "./Sanet.Transport.Relay.Contracts"]
 COPY ["src/Sanet.Transport.SignalR.Hub/", "./Sanet.Transport.SignalR.Hub"]
 
 # Build the application

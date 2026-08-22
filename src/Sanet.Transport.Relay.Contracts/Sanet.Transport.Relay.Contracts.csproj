@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <RootNamespace>Sanet.Transport.Relay.Contracts</RootNamespace>
+    <AssemblyName>Sanet.Transport.Relay.Contracts</AssemblyName>
+
+    <!-- NuGet package properties -->
+    <PackageId>Sanet.Transport.Relay.Contracts</PackageId>
+    <Description>Shared wire DTOs for the relay hub room-management REST API: room lifecycle contracts, DTOs, and error types. Referenced by both the Hub and client SDK.</Description>
+    <PackageProjectUrl>https://github.com/anton-makarevich/Sanet.Transport</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/anton-makarevich/Sanet.Transport</RepositoryUrl>
+    <PackageTags>transport;signalr;relay;contracts;rooms</PackageTags>
+  </PropertyGroup>
+
+</Project>
