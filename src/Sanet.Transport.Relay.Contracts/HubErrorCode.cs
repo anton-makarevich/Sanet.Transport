@@ -1,7 +1,7 @@
 namespace Sanet.Transport.Relay.Contracts;
 
 /// <summary>
-/// Error codes returned by the relay's REST contract. Serialized as string names via
+/// Shared relay error code used by both the REST and SignalR transports. Serialized as string names via
 /// <see cref="System.Text.Json.Serialization.JsonStringEnumConverter"/>; values are pinned
 /// so both Hub and clients stay in sync even if names are reordered.
 /// </summary>
