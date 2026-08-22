@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
-using Sanet.Transport.SignalR.Hub.Contracts;
+using Sanet.Transport.Relay.Contracts;
 using Sanet.Transport.SignalR.Hub.Rooms;
 
 namespace Sanet.Transport.SignalR.Hub.Controllers;

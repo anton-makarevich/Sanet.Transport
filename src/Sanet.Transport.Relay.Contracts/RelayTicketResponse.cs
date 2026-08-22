@@ -1,4 +1,4 @@
-namespace Sanet.Transport.SignalR.Hub.Contracts;
+namespace Sanet.Transport.Relay.Contracts;
 
 /// <summary>
 /// Wire DTO returned by <c>POST api/rooms/{code}/relay-ticket</c>.

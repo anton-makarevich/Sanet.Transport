@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
-using Sanet.Transport.SignalR.Hub.Contracts;
+using Sanet.Transport.Relay.Contracts;
 using Sanet.Transport.SignalR.Hub.Controllers;
 using Sanet.Transport.SignalR.Hub.Rooms;
 using Sanet.Transport.SignalR.Hub.Tests.TestLoggers;

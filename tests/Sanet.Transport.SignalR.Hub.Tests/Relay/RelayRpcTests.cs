@@ -13,12 +13,12 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Sanet.Transport.SignalR.Client.Relay;
-using Sanet.Transport.SignalR.Hub.Contracts;
+using Sanet.Transport.Relay.Contracts;
 using Sanet.Transport.SignalR.Hub.Relay;
 using Sanet.Transport.SignalR.Hub.Rooms;
 using Sanet.Transport.SignalR.Hub.Security;
 using Shouldly;
-using HubErrorCode = Sanet.Transport.SignalR.Hub.Contracts.HubErrorCode;
+using HubErrorCode = Sanet.Transport.Relay.Contracts.HubErrorCode;
 
 namespace Sanet.Transport.SignalR.Hub.Tests.Relay;
 

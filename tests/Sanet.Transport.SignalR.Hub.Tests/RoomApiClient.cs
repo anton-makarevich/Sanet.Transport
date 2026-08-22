@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Sanet.Transport.SignalR.Hub.Contracts;
+using Sanet.Transport.Relay.Contracts;
 using Sanet.Transport.SignalR.Hub.Security;
 using Shouldly;
 

@@ -1,4 +1,4 @@
-namespace Sanet.Transport.SignalR.Hub.Contracts;
+namespace Sanet.Transport.Relay.Contracts;
 
 /// <summary>
 /// A public error returned by the relay's REST contract.
