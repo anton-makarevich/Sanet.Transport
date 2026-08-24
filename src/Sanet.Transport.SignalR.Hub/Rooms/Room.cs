@@ -107,16 +107,22 @@ public sealed class Room
     /// authenticate without exposing the session token. Stale tickets — expired, or
     /// bound to a revoked, replaced, or otherwise non-current session — are removed
     /// first, and issuance is refused once <see cref="MaxActiveRelayTickets"/> live
-    /// tickets are held. Returns false when the session is unknown or already expired,
-    /// or when the ticket cap is reached. Tickets remain resolvable (repeatable) until
-    /// their expiry so reconnects within the ticket window succeed.
+    /// tickets are held. Returns false when the session is unknown or when the ticket
+    /// cap is reached. Tickets remain resolvable (repeatable) until their expiry so
+    /// reconnects within the ticket window succeed.
+    /// Issuance slides the requesting session's lifetime to the room's current
+    /// <see cref="ExpiresAt"/>, so an authenticated device session can obtain fresh
+    /// relay tickets for arbitrarily long games yet never outlives its room.
     /// </summary>
     internal bool IssueRelayTicket(string sessionToken, string ticket, DateTimeOffset now, TimeSpan ttl)
     {
-        if (!_sessions.TryGetValue(sessionToken, out var session) || session.ExpiresAt <= now)
+        if (!_sessions.TryGetValue(sessionToken, out var session))
         {
             return false;
         }
+
+        session = session with { ExpiresAt = ExpiresAt };
+        _sessions[sessionToken] = session;
 
         RemoveStaleRelayTickets(now);
 

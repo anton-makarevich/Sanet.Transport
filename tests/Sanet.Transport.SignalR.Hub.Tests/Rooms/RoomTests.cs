@@ -245,17 +245,21 @@ public class RoomTests
     }
 
     [Fact]
-    public void IssueRelayTicket_WithExpiredSession_ReturnsFalse()
+    public void IssueRelayTicket_WithSessionPastOriginalExpiry_SlidesSessionToRoomExpiry()
     {
         var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
 
+        // Session originally expired, but the room is still alive: issuance must
+        // refresh the session so long-running games can re-authenticate (#52).
         var issued = room.IssueRelayTicket(
             "host-token",
             "ticket-1",
             DefaultNow.AddHours(3),
             TimeSpan.FromSeconds(60));
 
-        issued.ShouldBeFalse();
+        issued.ShouldBeTrue();
+        room.TryGetSession("host-token", out var session).ShouldBeTrue();
+        session.ExpiresAt.ShouldBe(room.ExpiresAt);
     }
 
     [Fact]

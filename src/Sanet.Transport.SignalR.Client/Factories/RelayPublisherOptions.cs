@@ -21,4 +21,13 @@ public sealed record RelayPublisherOptions : PublisherOptions
     /// carried in the hub URL query string; the REST session token must never be exposed there.
     /// </summary>
     public required string RelayTicket { get; init; }
+
+    /// <summary>
+    /// Optional delegate invoked by <see cref="Publishers.RelayClientPublisher"/> when the
+    /// connection closes, to obtain a fresh relay ticket (typically via
+    /// <c>IRelayRoomClient.GetRelayTicket</c> using the stored session token and room code)
+    /// and transparently rebuild and restart the connection. When null, a closed connection
+    /// raises the terminal <see cref="Publishers.RelayClientPublisher.Closed"/> event.
+    /// </summary>
+    public Func<CancellationToken, Task<Publishers.RelayTicketRefresh?>>? TicketRefresh { get; init; }
 }

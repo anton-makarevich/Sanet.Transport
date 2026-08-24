@@ -102,6 +102,58 @@ await publisher.PublishMessage(new TransportMessage
 });
 ```
 
+### 3. Automatic recovery with ticket refresh (`RelayClientPublisher`)
+
+Relay tickets are short-lived. Without extra configuration, a connection drop after the
+ticket window has passed is **terminal**: `Closed` fires and callers must recreate the
+publisher. For games that must survive mid-session network drops (mobile doze, radio
+handoffs), supply a `TicketRefresh` delegate: when the connection closes, the publisher
+invokes it to obtain a fresh relay ticket, transparently rebuilds and restarts the
+underlying SignalR connection (preserving subscribers and public events), flushes any
+queued outbound messages, and raises `Reconnected`.
+
+```csharp
+using Sanet.Transport.SignalR.Client.Factories;
+using Sanet.Transport.SignalR.Client.Publishers;
+
+var options = new RelayPublisherOptions
+{
+    HubUrl = hubUrl,
+    RoomCode = roomCode,
+    RelayTicket = relayTicket,
+    TicketRefresh = async ct =>
+    {
+        // Fetch a fresh relay ticket from the REST API using the stored session token.
+        var response = await relayRoomClient.GetRelayTicket(roomCode, sessionToken, ct);
+        return response.Success
+            ? new RelayTicketRefresh(response.Ticket!, response.ExpiresAt)
+            : null; // null (or a thrown exception) makes the close terminal -> Closed fires
+    }
+};
+
+var factory = new RelayPublisherFactory(loggerFactory);
+await using var publisher = await factory.Create(options);
+
+publisher.Reconnected += connectionId =>
+    Console.WriteLine($"Recovered with fresh ticket, connection {connectionId}");
+publisher.Closed += error =>
+    Console.WriteLine($"Terminal close — recreate the publisher with a fresh ticket");
+```
+
+Semantics:
+
+- **`Closed`** is raised only when no refresh delegate is configured, the delegate fails or
+  returns null, or the bounded restart attempts are exhausted — i.e. it is truly terminal.
+- **Outbound queuing**: messages published while reconnecting or rebuilding are queued
+  (bounded FIFO, 500 messages by default) and flushed in order after reconnection. When the
+  queue is full, `PublishMessage` throws `TransportPublishException` with
+  `PublishFailureReason.QueueFull`; publishing while disconnected with no rebuild in progress
+  throws `TransportPublishException` with `PublishFailureReason.NotConnected`.
+  Catch `TransportPublishException` and retry as appropriate for your game.
+- **Breaking change**: publishing while not connected used to throw
+  `InvalidOperationException("Relay client is not connected.")`; it now throws
+  `TransportPublishException(PublishFailureReason.NotConnected)`.
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](../../LICENSE) file for details.

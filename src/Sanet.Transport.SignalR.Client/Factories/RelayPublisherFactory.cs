@@ -37,7 +37,8 @@ public sealed class RelayPublisherFactory : IPublisherFactory
             relayOptions.HubUrl,
             relayOptions.RoomCode,
             relayOptions.RelayTicket,
-            logger);
+            logger,
+            ticketRefresh: relayOptions.TicketRefresh);
 
         logger.LogDebug(
             "Creating RelayClientPublisher for room {RoomCode} at {HubUrl}",

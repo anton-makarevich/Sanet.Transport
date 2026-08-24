@@ -15,6 +15,7 @@ public class RelayClientPublisherTests
     private const string ValidHubUrl = "http://localhost:5000/relayhub";
     private const string ValidRoomCode = "ROOM01";
     private const string ValidRelayTicket = "token-abc-123";
+    private const string RefreshedRelayTicket = "token-refreshed-456";
 
     [Fact]
     public void Constructor_WithValidArgs_CreatesPublisher()
@@ -88,23 +89,6 @@ public class RelayClientPublisherTests
 
         // Assert
         called.ShouldBeFalse();
-    }
-
-    [Fact]
-    public async Task PublishMessage_WhenDisconnected_ThrowsInvalidOperationException()
-    {
-        // Arrange
-        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
-        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidRelayTicket, logger);
-        var message = new TransportMessage
-        {
-            MessageType = "TestCommand",
-            SourceId = Guid.NewGuid(),
-            Payload = "{}"
-        };
-
-        // Act & Assert
-        await Should.ThrowAsync<InvalidOperationException>(() => publisher.PublishMessage(message));
     }
 
     [Fact]
@@ -514,6 +498,253 @@ public class RelayClientPublisherTests
 
         var completed = await Task.WhenAny(closed.Task, Task.Delay(TimeSpan.FromSeconds(10)));
         completed.ShouldBe(closed.Task, "Expected connection to close without automatic reconnect");
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenConnectionDropsAndRefreshReturnsFreshTicket_RestartsConnectionWithoutClosing()
+    {
+        await using var host = await RebuildTestRelayHubHost.StartAsync(
+            [ValidRelayTicket, RefreshedRelayTicket],
+            abortTicket: ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        await using var publisher = new RelayClientPublisher(
+            hubUrl,
+            ValidRoomCode,
+            ValidRelayTicket,
+            logger,
+            relayTicketExpiresAt: null,
+            _ => Task.FromResult<RelayTicketRefresh?>(new RelayTicketRefresh(
+                RefreshedRelayTicket, DateTimeOffset.UtcNow.AddSeconds(60))));
+
+        var reconnected = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var closed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        publisher.Reconnected += _ => reconnected.TrySetResult(true);
+        publisher.Closed += _ => closed.TrySetResult(true);
+
+        await publisher.StartAsync();
+        publisher.IsConnected.ShouldBeTrue();
+
+        var completed = await Task.WhenAny(reconnected.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        completed.ShouldBe(reconnected.Task, "Expected manual rebuild with a fresh ticket to succeed");
+        publisher.IsConnected.ShouldBeTrue();
+        closed.Task.IsCompleted.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenConnectionDropsAndRefreshReturnsNull_RaisesTerminalClosed()
+    {
+        await using var host = await RebuildTestRelayHubHost.StartAsync(
+            [ValidRelayTicket],
+            abortTicket: ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        await using var publisher = new RelayClientPublisher(
+            hubUrl,
+            ValidRoomCode,
+            ValidRelayTicket,
+            logger,
+            relayTicketExpiresAt: null,
+            _ => Task.FromResult<RelayTicketRefresh?>(null));
+
+        var closed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        publisher.Closed += _ => closed.TrySetResult(true);
+
+        await publisher.StartAsync();
+        publisher.IsConnected.ShouldBeTrue();
+
+        var completed = await Task.WhenAny(closed.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        completed.ShouldBe(closed.Task, "Expected terminal Closed when ticket refresh fails");
+        publisher.IsConnected.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenConnectionDropsAndRefreshThrows_RaisesTerminalClosed()
+    {
+        await using var host = await RebuildTestRelayHubHost.StartAsync(
+            [ValidRelayTicket],
+            abortTicket: ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        await using var publisher = new RelayClientPublisher(
+            hubUrl,
+            ValidRoomCode,
+            ValidRelayTicket,
+            logger,
+            relayTicketExpiresAt: null,
+            _ => Task.FromException<RelayTicketRefresh?>(new InvalidOperationException("refresh failed")));
+
+        var closed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        publisher.Closed += _ => closed.TrySetResult(true);
+
+        await publisher.StartAsync();
+        publisher.IsConnected.ShouldBeTrue();
+
+        var completed = await Task.WhenAny(closed.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        completed.ShouldBe(closed.Task, "Expected terminal Closed when ticket refresh throws");
+    }
+
+    [Fact]
+    public async Task DisposeAsync_PreventsTicketRefreshDelegateInvocation()
+    {
+        await using var host = await RebuildTestRelayHubHost.StartAsync(
+            [ValidRelayTicket],
+            abortTicket: ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+
+        var refreshCalls = 0;
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        var publisher = new RelayClientPublisher(
+            hubUrl,
+            ValidRoomCode,
+            ValidRelayTicket,
+            logger,
+            relayTicketExpiresAt: null,
+            _ =>
+            {
+                Interlocked.Increment(ref refreshCalls);
+                return Task.FromResult<RelayTicketRefresh?>(null);
+            });
+
+        await publisher.StartAsync();
+        // Dispose before the flaky host aborts the connection (~500ms).
+        await publisher.DisposeAsync();
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        refreshCalls.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task PublishMessage_WhenDisconnected_ThrowsTransportPublishExceptionNotConnected()
+    {
+        // Arrange
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidRelayTicket, logger);
+        var message = new TransportMessage
+        {
+            MessageType = "TestCommand",
+            SourceId = Guid.NewGuid(),
+            Payload = "{}"
+        };
+
+        // Act & Assert
+        var exception = await Should.ThrowAsync<TransportPublishException>(
+            () => publisher.PublishMessage(message));
+        exception.Reason.ShouldBe(PublishFailureReason.NotConnected);
+    }
+
+    [Fact]
+    public async Task PublishMessage_WhileRebuildInProgress_QueuesMessagesAndDeliversInOrderAfterReconnect()
+    {
+        await using var host = await RebuildTestRelayHubHost.StartAsync(
+            [ValidRelayTicket, RefreshedRelayTicket],
+            abortTicket: ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+
+        var refreshGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        await using var publisher = new RelayClientPublisher(
+            hubUrl,
+            ValidRoomCode,
+            ValidRelayTicket,
+            logger,
+            relayTicketExpiresAt: null,
+            async _ =>
+            {
+                await refreshGate.Task;
+                return new RelayTicketRefresh(
+                    RefreshedRelayTicket, DateTimeOffset.UtcNow.AddSeconds(60));
+            });
+
+        var received = new List<string>();
+        var allReceived = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        publisher.Subscribe(message =>
+        {
+            lock (received)
+            {
+                received.Add(message.Payload);
+                if (received.Count == 3) allReceived.TrySetResult(true);
+            }
+        });
+
+        await publisher.StartAsync();
+        publisher.IsConnected.ShouldBeTrue();
+
+        // Wait for the drop and the blocked refresh (rebuild in progress).
+        await WaitUntilAsync(() => !publisher.IsConnected);
+
+        // Publishing while the rebuild is in flight must queue, not throw.
+        foreach (var payload in new[] { "m1", "m2", "m3" })
+        {
+            await publisher.PublishMessage(new TransportMessage
+            {
+                MessageType = "TestCommand",
+                SourceId = Guid.NewGuid(),
+                Payload = payload
+            });
+        }
+
+        refreshGate.TrySetResult(true);
+
+        var completed = await Task.WhenAny(allReceived.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        completed.ShouldBe(allReceived.Task, "Expected queued messages to be delivered after rebuild");
+        lock (received)
+        {
+            received.ShouldBe(["m1", "m2", "m3"]);
+        }
+    }
+
+    [Fact]
+    public async Task PublishMessage_WhenQueueOverflows_ThrowsQueueFullAndKeepsEarlierMessages()
+    {
+        await using var host = await RebuildTestRelayHubHost.StartAsync(
+            [ValidRelayTicket, RefreshedRelayTicket],
+            abortTicket: ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+
+        var refreshGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        await using var publisher = new RelayClientPublisher(
+            hubUrl,
+            ValidRoomCode,
+            ValidRelayTicket,
+            logger,
+            relayTicketExpiresAt: null,
+            async _ =>
+            {
+                await refreshGate.Task;
+                return (RelayTicketRefresh?)null;
+            },
+            outboundQueueCapacity: 2);
+
+        await publisher.StartAsync();
+        await WaitUntilAsync(() => !publisher.IsConnected);
+
+        TransportMessage Make(string payload) => new()
+        {
+            MessageType = "TestCommand",
+            SourceId = Guid.NewGuid(),
+            Payload = payload
+        };
+
+        await publisher.PublishMessage(Make("q1"));
+        await publisher.PublishMessage(Make("q2"));
+        var overflow = await Should.ThrowAsync<TransportPublishException>(
+            () => publisher.PublishMessage(Make("q3")));
+        overflow.Reason.ShouldBe(PublishFailureReason.QueueFull);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> predicate)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (!predicate() && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+        predicate().ShouldBeTrue();
     }
 
     private static RetryContext CreateRetryContext(long previousRetryCount, TimeSpan elapsedTime) => new()

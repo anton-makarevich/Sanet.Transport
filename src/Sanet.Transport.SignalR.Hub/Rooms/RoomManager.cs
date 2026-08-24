@@ -599,7 +599,10 @@ public sealed class RoomManager : IRoomManager
                 return RelayTicketResult.NotFound();
             }
 
-            if (!room.TryGetSession(sessionToken, out var session) || session.ExpiresAt <= now)
+            // Session expiry itself is not rejected here: issuing a ticket slides the
+            // session's lifetime to the room's current expiry (issue #52), so an
+            // authenticated device session stays usable while its room is alive.
+            if (!room.TryGetSession(sessionToken, out var session))
             {
                 _logger.LogWarning(
                     "Relay-ticket request rejected for room {RoomCode}: session token not recognized",
