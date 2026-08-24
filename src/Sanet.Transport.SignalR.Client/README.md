@@ -116,6 +116,10 @@ queued outbound messages, and raises `Reconnected`.
 using Sanet.Transport.SignalR.Client.Factories;
 using Sanet.Transport.SignalR.Client.Publishers;
 
+// Fetch the initial relay ticket from the REST API using the stored session token.
+var initialResponse = await relayRoomClient.GetRelayTicket(roomCode, sessionToken, CancellationToken.None);
+var relayTicket = initialResponse.Ticket!;
+
 var options = new RelayPublisherOptions
 {
     HubUrl = hubUrl,

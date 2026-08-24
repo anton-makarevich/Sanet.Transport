@@ -44,6 +44,7 @@ public class RelayClientPublisher : ITransportPublisher
     private long _sequenceNumber;
     private volatile bool _isDisposed;
     private bool _isRebuilding;
+    private Task? _rebuildTask;
 
     /// <summary>
     /// Event raised when a peer connects to the room.
@@ -296,7 +297,22 @@ public class RelayClientPublisher : ITransportPublisher
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to flush queued message after rebuild; dropping it");
+                _logger.LogError(
+                    ex,
+                    "Failed to flush queued message after rebuild; requeueing it for the next rebuild");
+                lock (_connectionLock)
+                {
+                    // Requeue the failed message ahead of any messages enqueued mid-flush,
+                    // preserving order, and stop so a subsequent rebuild retries everything.
+                    var remaining = _outboundQueue.ToArray();
+                    _outboundQueue.Clear();
+                    _outboundQueue.Enqueue(message);
+                    foreach (var queued in remaining)
+                    {
+                        _outboundQueue.Enqueue(queued);
+                    }
+                }
+                return;
             }
         }
     }
@@ -350,7 +366,13 @@ public class RelayClientPublisher : ITransportPublisher
 
     private void AttachHandlers(HubConnection connection)
     {
-        connection.On<RelayEnvelope>("OnReceive", HandleEnvelopeReceived);
+        // Return a completed Task so the SignalR client awaits the handler before
+        // dispatching the next envelope, preserving delivery order to subscribers.
+        connection.On<RelayEnvelope>("OnReceive", envelope =>
+        {
+            HandleEnvelopeReceived(envelope);
+            return Task.CompletedTask;
+        });
         connection.On<HubError>("OnError", HandleHubError);
         connection.On<string>("OnPeerConnected", HandlePeerConnected);
         connection.On<string>("OnPeerDisconnected", HandlePeerDisconnected);
@@ -491,6 +513,24 @@ public class RelayClientPublisher : ITransportPublisher
         _isDisposed = true;
         _rebuildCts.Cancel();
 
+        Task? rebuildTask;
+        lock (_connectionLock)
+        {
+            rebuildTask = _rebuildTask;
+        }
+
+        if (rebuildTask is not null)
+        {
+            try
+            {
+                await rebuildTask;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "In-flight relay rebuild ended with an error during disposal");
+            }
+        }
+
         var connection = CurrentConnection;
         DetachHandlers(connection);
 
@@ -542,30 +582,32 @@ public class RelayClientPublisher : ITransportPublisher
             return Task.CompletedTask;
         }
 
-        // Fire-and-forget: the SignalR Closed handler must return promptly.
-        _ = Task.Run(() => RebuildConnectionAsync());
+        // Fire-and-forget: the SignalR Closed handler must return promptly. The rebuild
+        // flag is taken synchronously here so publishing during the recovery window is
+        // queued rather than rejected as NotConnected.
+        lock (_connectionLock)
+        {
+            if (_isRebuilding)
+            {
+                return Task.CompletedTask;
+            }
+
+            _isRebuilding = true;
+            _rebuildTask = Task.Run(RebuildConnectionAsync);
+        }
         return Task.CompletedTask;
     }
 
     /// <summary>
     /// Obtains a fresh relay ticket via the refresh delegate, rebuilds the underlying
     /// <see cref="HubConnection"/> around it and restarts it. Single-flight: overlapping
-    /// close notifications while a rebuild runs are ignored. Raises the terminal
+    /// close notifications while a rebuild runs are ignored (the rebuild flag is already
+    /// held by <see cref="OnClosed"/>). Raises the terminal
     /// <see cref="Closed"/> event when the delegate fails, returns null, or the bounded
     /// restart attempts are exhausted.
     /// </summary>
     private async Task RebuildConnectionAsync()
     {
-        lock (_connectionLock)
-        {
-            if (_isRebuilding || _isDisposed)
-            {
-                return;
-            }
-
-            _isRebuilding = true;
-        }
-
         try
         {
             await RefreshAndRestartAsync();
@@ -575,6 +617,7 @@ public class RelayClientPublisher : ITransportPublisher
             lock (_connectionLock)
             {
                 _isRebuilding = false;
+                _rebuildTask = null;
             }
         }
     }

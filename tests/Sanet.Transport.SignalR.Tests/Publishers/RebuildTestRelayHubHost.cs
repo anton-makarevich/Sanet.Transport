@@ -6,7 +6,11 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Sanet.Transport.SignalR.Tests.Publishers;
 
-internal sealed record RebuildHubConfig(string[] ValidTickets, string AbortTicket);
+internal sealed record RebuildHubConfig(
+    string[] ValidTickets,
+    string AbortTicket,
+    TimeSpan AbortDelay = default,
+    TaskCompletionSource<bool>? AbortObserved = null);
 
 /// <summary>
 /// Hub that accepts connections whose ticket query parameter is one of the configured
@@ -30,8 +34,13 @@ public sealed class RebuildTestRelayHub : Hub
             {
                 _ = Task.Run(async () =>
                 {
-                    await Task.Delay(TimeSpan.FromMilliseconds(500));
+                    if (config.AbortDelay > TimeSpan.Zero)
+                    {
+                        await Task.Delay(config.AbortDelay);
+                    }
+
                     httpContext.Abort();
+                    config.AbortObserved?.TrySetResult(true);
                 });
             }
         }
@@ -44,12 +53,18 @@ internal static class RebuildTestRelayHubHost
 {
     public static async Task<WebApplication> StartAsync(
         string[] validRelayTickets,
-        string abortTicket)
+        string abortTicket,
+        TimeSpan? abortDelay = null,
+        TaskCompletionSource<bool>? abortObserved = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Services.AddSignalR();
-        builder.Services.AddSingleton(new RebuildHubConfig(validRelayTickets, abortTicket));
+        builder.Services.AddSingleton(new RebuildHubConfig(
+            validRelayTickets,
+            abortTicket,
+            abortDelay ?? TimeSpan.FromMilliseconds(100),
+            abortObserved));
         var app = builder.Build();
         app.UseWebSockets();
         app.Use(async (context, next) =>

@@ -37,7 +37,7 @@ public class RelayTicketSessionRefreshTests
         clock.Advance(TimeSpan.FromSeconds(31));
 
         var ticket = await RoomApiClient.RequestRelayTicket(
-            httpClient, created.RoomCode, created.SessionToken);
+            httpClient, created.RoomCode!, created.SessionToken!);
 
         ticket.ShouldNotBeNullOrWhiteSpace();
     }

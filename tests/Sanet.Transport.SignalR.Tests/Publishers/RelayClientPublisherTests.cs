@@ -7,6 +7,7 @@ using Sanet.Transport.SignalR.Client.Publishers;
 using Sanet.Transport.SignalR.Client.Relay;
 using Shouldly;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Sanet.Transport.SignalR.Tests.Publishers;
 
@@ -17,7 +18,7 @@ public class RelayClientPublisherTests
     private const string ValidRelayTicket = "token-abc-123";
     private const string RefreshedRelayTicket = "token-refreshed-456";
 
-    [Fact]
+        [Fact]
     public void Constructor_WithValidArgs_CreatesPublisher()
     {
         var logger = Substitute.For<ILogger<RelayClientPublisher>>();
@@ -588,14 +589,15 @@ public class RelayClientPublisherTests
     }
 
     [Fact]
-    public async Task DisposeAsync_PreventsTicketRefreshDelegateInvocation()
+    public async Task DisposeAsync_CancelsInFlightRebuildAndPreventsFurtherTicketRefresh()
     {
         await using var host = await RebuildTestRelayHubHost.StartAsync(
             [ValidRelayTicket],
             abortTicket: ValidRelayTicket);
         var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
 
-        var refreshCalls = 0;
+        var refreshInvocations = 0;
+        var refreshStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var logger = Substitute.For<ILogger<RelayClientPublisher>>();
         var publisher = new RelayClientPublisher(
             hubUrl,
@@ -603,18 +605,28 @@ public class RelayClientPublisherTests
             ValidRelayTicket,
             logger,
             relayTicketExpiresAt: null,
-            _ =>
+            ct =>
             {
-                Interlocked.Increment(ref refreshCalls);
-                return Task.FromResult<RelayTicketRefresh?>(null);
+                Interlocked.Increment(ref refreshInvocations);
+                refreshStarted.TrySetResult(true);
+                return Task.Delay(Timeout.InfiniteTimeSpan, ct)
+                    .ContinueWith<RelayTicketRefresh?>(_ => null, TaskScheduler.Default);
             });
 
         await publisher.StartAsync();
-        // Dispose before the flaky host aborts the connection (~500ms).
-        await publisher.DisposeAsync();
-        await Task.Delay(TimeSpan.FromSeconds(2));
+        publisher.IsConnected.ShouldBeTrue();
 
-        refreshCalls.ShouldBe(0);
+        // Wait until the connection dropped and the rebuild is blocked in the refresh.
+        var started = await Task.WhenAny(refreshStarted.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        started.ShouldBe(refreshStarted.Task, "expected the rebuild to start after the drop");
+
+        // Disposal must cancel the in-flight refresh and await its completion.
+        await publisher.DisposeAsync();
+
+        // The rebuild has fully unwound before DisposeAsync returns, and no further
+        // close notification can occur afterwards, so exactly one invocation happened.
+        Interlocked.CompareExchange(ref refreshInvocations, 0, 0).ShouldBe(1);
+        publisher.IsConnected.ShouldBeFalse();
     }
 
     [Fact]
@@ -713,9 +725,18 @@ public class RelayClientPublisherTests
             ValidRelayTicket,
             logger,
             relayTicketExpiresAt: null,
-            async _ =>
+            async ct =>
             {
-                await refreshGate.Task;
+                // Hold the rebuild in-flight while messages are published; disposal
+                // cancels the token, ending the hold without invoking real refresh.
+                try
+                {
+                    await refreshGate.Task.WaitAsync(ct);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+
                 return (RelayTicketRefresh?)null;
             },
             outboundQueueCapacity: 2);
