@@ -758,6 +758,56 @@ public class RelayClientPublisherTests
         overflow.Reason.ShouldBe(PublishFailureReason.QueueFull);
     }
 
+    [Fact]
+    public async Task PublishMessage_DuringAutoReconnectDrain_QueuesAndDelivers()
+    {
+        await using var host = await AutoReconnectTestRelayHubHost.StartAsync(ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        await using var publisher = new RelayClientPublisher(
+            hubUrl,
+            ValidRoomCode,
+            ValidRelayTicket,
+            logger,
+            DateTimeOffset.UtcNow.AddSeconds(30));
+
+        var received = new List<string>();
+        var allReceived = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        publisher.Subscribe(message =>
+        {
+            lock (received)
+            {
+                received.Add(message.Payload);
+                if (received.Count >= 1) allReceived.TrySetResult(true);
+            }
+        });
+
+        // Publish a message inside the Reconnected handler.  Because _isDrainingRecovery
+        // is set before Reconnected fires, PublishMessage must queue the message so
+        // FlushOutboundQueueAsync drains it in order.
+        publisher.Reconnected += _ =>
+        {
+            publisher.PublishMessage(new TransportMessage
+            {
+                MessageType = "TestCommand",
+                SourceId = Guid.NewGuid(),
+                Payload = "during-drain"
+            }).GetAwaiter().GetResult();
+        };
+
+        await publisher.StartAsync();
+        publisher.IsConnected.ShouldBeTrue();
+
+        var completed = await Task.WhenAny(allReceived.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+        completed.ShouldBe(allReceived.Task,
+            "Expected message published during auto-reconnect drain to be delivered");
+        lock (received)
+        {
+            received.ShouldBe(["during-drain"]);
+        }
+    }
+
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
         var deadline = DateTime.UtcNow.AddSeconds(15);

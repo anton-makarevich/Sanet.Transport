@@ -45,6 +45,7 @@ public class RelayClientPublisher : ITransportPublisher
     private bool _isRebuilding;
     private Task? _rebuildTask;
     private HubConnection? _pendingCloseConnection;
+    private volatile bool _isDrainingRecovery;
     private readonly Dictionary<HubConnection, Func<Exception?, Task>> _closedHandlers = new();
 
     /// <summary>
@@ -229,10 +230,11 @@ public class RelayClientPublisher : ITransportPublisher
         HubConnection? sendTarget;
         lock (_connectionLock)
         {
-            // While a rebuild (including its queue flush) is running, messages must be
-            // enqueued so they cannot overtake queued ones mid-flush; direct sends are
-            // allowed only once the rebuild has fully completed, preserving ordering.
-            if (_isRebuilding || _hubConnection.State == HubConnectionState.Reconnecting)
+            // While a rebuild (including its queue flush) or a recovery drain is running,
+            // messages must be enqueued so they cannot overtake queued ones mid-flush;
+            // direct sends are allowed only once the operation has fully completed,
+            // preserving ordering.
+            if (_isRebuilding || _isDrainingRecovery || _hubConnection.State == HubConnectionState.Reconnecting)
             {
                 EnqueueOrThrowQueueFull(message);
                 return;
@@ -587,11 +589,32 @@ public class RelayClientPublisher : ITransportPublisher
         _logger.LogInformation("Relay client reconnected with connection ID {ConnectionId}", connectionId);
 
         var connection = CurrentConnection;
-        RaiseEvent(() => Reconnected?.Invoke(connectionId));
 
-        // Messages published while the connection was automatically reconnecting were
-        // queued by PublishMessage; drain them now that the connection is restored.
-        await FlushOutboundQueueAsync(connection);
+        // Block PublishMessage from sending directly while the queue is being drained
+        // so messages published during the drain are appended in order.
+        _isDrainingRecovery = true;
+        try
+        {
+            RaiseEvent(() => Reconnected?.Invoke(connectionId));
+
+            // Messages published while the connection was automatically reconnecting were
+            // queued by PublishMessage; drain them now that the connection is restored.
+            await FlushOutboundQueueAsync(connection);
+        }
+        finally
+        {
+            // Only clear the flag when the queue was fully emptied. When flushing fails
+            // FlushOutboundQueueAsync requeues the failed message and returns; keeping the
+            // flag set ensures subsequent publishes continue to queue so messages remain
+            // ordered and will be retried on the next rebuild.
+            lock (_connectionLock)
+            {
+                if (_outboundQueue.Count == 0)
+                {
+                    _isDrainingRecovery = false;
+                }
+            }
+        }
     }
 
     private Task OnClosed(HubConnection connection, Exception? exception)
@@ -723,73 +746,78 @@ public class RelayClientPublisher : ITransportPublisher
             _hubConnection = newConnection;
         }
 
-        AttachHandlers(newConnection);
-
-        Exception? lastStartFailure = null;
-        for (var attempt = 1; attempt <= MaxRestartAttempts && !_isDisposed; attempt++)
+        try
         {
-            try
+            AttachHandlers(newConnection);
+
+            Exception? lastStartFailure = null;
+            for (var attempt = 1; attempt <= MaxRestartAttempts && !_isDisposed; attempt++)
             {
-                await newConnection.StartAsync(_rebuildCts.Token);
-                lastStartFailure = null;
-                break;
-            }
-            catch (OperationCanceledException) when (_isDisposed)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                lastStartFailure = ex;
-                _logger.LogWarning(
-                    ex,
-                    "Failed to restart relay connection with fresh ticket (attempt {Attempt}/{MaxAttempts})",
-                    attempt,
-                    MaxRestartAttempts);
                 try
                 {
-                    await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), _rebuildCts.Token);
+                    await newConnection.StartAsync(_rebuildCts.Token);
+                    lastStartFailure = null;
+                    break;
                 }
                 catch (OperationCanceledException) when (_isDisposed)
                 {
                     return;
                 }
+                catch (Exception ex)
+                {
+                    lastStartFailure = ex;
+                    _logger.LogWarning(
+                        ex,
+                        "Failed to restart relay connection with fresh ticket (attempt {Attempt}/{MaxAttempts})",
+                        attempt,
+                        MaxRestartAttempts);
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), _rebuildCts.Token);
+                    }
+                    catch (OperationCanceledException) when (_isDisposed)
+                    {
+                        return;
+                    }
+                }
             }
-        }
 
-        if (lastStartFailure is not null)
-        {
-            _logger.LogError(
-                "Giving up restarting relay connection after {MaxAttempts} attempts",
-                MaxRestartAttempts);
-            RaiseTerminalClosed(lastStartFailure);
-            return;
-        }
-
-        if (_isDisposed)
-        {
-            return;
-        }
-
-        _logger.LogInformation(
-            "Relay client rebuilt its connection with a fresh relay ticket (connection ID {ConnectionId})",
-            newConnection.ConnectionId);
-
-        RaiseEvent(() => Reconnected?.Invoke(newConnection.ConnectionId));
-
-        await FlushOutboundQueueAsync(newConnection);
-
-        _ = Task.Run(async () =>
-        {
-            try
+            if (lastStartFailure is not null)
             {
-                await oldConnection.DisposeAsync();
+                _logger.LogError(
+                    "Giving up restarting relay connection after {MaxAttempts} attempts",
+                    MaxRestartAttempts);
+                RaiseTerminalClosed(lastStartFailure);
+                return;
             }
-            catch (Exception ex)
+
+            if (_isDisposed)
             {
-                _logger.LogDebug(ex, "Error disposing superseded relay connection");
+                return;
             }
-        });
+
+            _logger.LogInformation(
+                "Relay client rebuilt its connection with a fresh relay ticket (connection ID {ConnectionId})",
+                newConnection.ConnectionId);
+
+            RaiseEvent(() => Reconnected?.Invoke(newConnection.ConnectionId));
+
+            await FlushOutboundQueueAsync(newConnection);
+        }
+        finally
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await oldConnection.DisposeAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Error disposing superseded relay connection");
+                }
+            });
+        }
     }
 
     private void RaiseTerminalClosed(Exception? exception)
