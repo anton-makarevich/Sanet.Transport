@@ -867,7 +867,7 @@ public class RelayClientPublisher : ITransportPublisher
 
             RaiseEvent(() => Reconnected?.Invoke(newConnection.ConnectionId));
 
-            await FlushOutboundQueueAsync(newConnection);
+            await DrainQueueAndClearRebuildGate(newConnection);
         }
         finally
         {

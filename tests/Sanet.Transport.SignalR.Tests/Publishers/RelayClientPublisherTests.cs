@@ -996,6 +996,85 @@ public class RelayClientPublisherTests
         }
     }
 
+    [Fact]
+    public async Task DrainQueue_AfterManualRebuild_InvocationFailureRetriedAndDirectPublishQueued()
+    {
+        await using var host = await RebuildDrainRetryRelayHubHost.StartAsync(
+            [ValidRelayTicket, RefreshedRelayTicket],
+            abortTicket: ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+        var relayCounter = host.Services.GetRequiredService<DrainInvocationCounter>();
+
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        var refreshGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var publisher = new RelayClientPublisher(
+            hubUrl,
+            ValidRoomCode,
+            ValidRelayTicket,
+            logger,
+            relayTicketExpiresAt: null,
+            async _ =>
+            {
+                await refreshGate.Task;
+                return new RelayTicketRefresh(
+                    RefreshedRelayTicket, DateTimeOffset.UtcNow.AddSeconds(60));
+            });
+
+        var received = new List<string>();
+        var allReceived = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        publisher.Subscribe(message =>
+        {
+            lock (received)
+            {
+                received.Add(message.Payload);
+                if (received.Count == 3) allReceived.TrySetResult(true);
+            }
+        });
+
+        await publisher.StartAsync();
+        publisher.IsConnected.ShouldBeTrue();
+
+        // Wait for the drop; messages published during the rebuild must be queued.
+        // The refresh is gated so the rebuild stays pending until the messages are queued.
+        await WaitUntilAsync(() => !publisher.IsConnected);
+        foreach (var payload in new[] { "m1", "m2" })
+        {
+            await publisher.PublishMessage(new TransportMessage
+            {
+                MessageType = "TestCommand",
+                SourceId = Guid.NewGuid(),
+                Payload = payload
+            });
+        }
+
+        refreshGate.TrySetResult(true);
+
+        // Once the rebuilt connection's drain has consumed the configured invocation
+        // failures (the replacement connection stays connected), a direct publish must
+        // still be appended to the queue instead of overtaking it.
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (relayCounter.Count < RebuildDrainRetryRelayHub.FailUntilRelayCount && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+        relayCounter.Count.ShouldBeGreaterThanOrEqualTo(RebuildDrainRetryRelayHub.FailUntilRelayCount);
+
+        await publisher.PublishMessage(new TransportMessage
+        {
+            MessageType = "TestCommand",
+            SourceId = Guid.NewGuid(),
+            Payload = "m3"
+        });
+
+        var completed = await Task.WhenAny(allReceived.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+        completed.ShouldBe(allReceived.Task,
+            "Expected all messages delivered in order after post-rebuild drain retry");
+        lock (received)
+        {
+            received.ShouldBe(["m1", "m2", "m3"]);
+        }
+    }
+
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
         var deadline = DateTime.UtcNow.AddSeconds(15);
