@@ -28,6 +28,7 @@ public class RelayClientPublisher : ITransportPublisher
 {
     private const int MaxRestartAttempts = 3;
     private const int DefaultOutboundQueueCapacity = 500;
+    private const int MaxDrainRetries = 5;
 
     private readonly string _hubUrl;
     private readonly string _roomCode;
@@ -230,10 +231,6 @@ public class RelayClientPublisher : ITransportPublisher
         HubConnection? sendTarget;
         lock (_connectionLock)
         {
-            // While a rebuild (including its queue flush) or a recovery drain is running,
-            // messages must be enqueued so they cannot overtake queued ones mid-flush;
-            // direct sends are allowed only once the operation has fully completed,
-            // preserving ordering.
             if (_isRebuilding || _isDrainingRecovery || _hubConnection.State == HubConnectionState.Reconnecting)
             {
                 EnqueueOrThrowQueueFull(message);
@@ -333,32 +330,58 @@ public class RelayClientPublisher : ITransportPublisher
 
     private async Task DrainQueueAndClearRebuildGate(HubConnection connection)
     {
-        await FlushOutboundQueueAsync(connection);
-
-        lock (_connectionLock)
+        for (var attempt = 0; attempt <= MaxDrainRetries; attempt++)
         {
-            if (_outboundQueue.Count == 0 || _isDisposed || connection.State != HubConnectionState.Connected)
+            await FlushOutboundQueueAsync(connection);
+
+            lock (_connectionLock)
             {
-                TryScheduleFollowUpRebuild();
-                return;
+                if (_outboundQueue.Count == 0 || _isDisposed || connection.State != HubConnectionState.Connected)
+                {
+                    TryScheduleFollowUpRebuild();
+                    return;
+                }
+
+                if (attempt >= MaxDrainRetries)
+                {
+                    _logger.LogWarning(
+                        "Drain queue exceeded maximum retry attempts ({MaxRetries}); clearing rebuild gate",
+                        MaxDrainRetries);
+                    TryScheduleFollowUpRebuild();
+                    return;
+                }
             }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(100 * (attempt + 1)));
         }
-        _ = Task.Run(() => DrainQueueAndClearRebuildGate(connection));
     }
 
     private async Task DrainQueueAndClearRecoveryFlag(HubConnection connection)
     {
-        await FlushOutboundQueueAsync(connection);
-
-        lock (_connectionLock)
+        for (var attempt = 0; attempt <= MaxDrainRetries; attempt++)
         {
-            if (_outboundQueue.Count == 0 || _isDisposed || connection.State != HubConnectionState.Connected)
+            await FlushOutboundQueueAsync(connection);
+
+            lock (_connectionLock)
             {
-                _isDrainingRecovery = false;
-                return;
+                if (_outboundQueue.Count == 0 || _isDisposed || connection.State != HubConnectionState.Connected)
+                {
+                    _isDrainingRecovery = false;
+                    return;
+                }
+
+                if (attempt >= MaxDrainRetries)
+                {
+                    _logger.LogWarning(
+                        "Recovery drain exceeded maximum retry attempts ({MaxRetries}); clearing recovery flag",
+                        MaxDrainRetries);
+                    _isDrainingRecovery = false;
+                    return;
+                }
             }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(100 * (attempt + 1)));
         }
-        _ = Task.Run(() => DrainQueueAndClearRecoveryFlag(connection));
     }
 
     /// <summary>
@@ -625,7 +648,12 @@ public class RelayClientPublisher : ITransportPublisher
         _isDrainingRecovery = true;
         try
         {
-            RaiseEvent(() => Reconnected?.Invoke(connectionId));
+            // Raise the Reconnected event synchronously (not via RaiseEvent) so that
+            // handlers execute while _isDrainingRecovery is still true.  This lets
+            // handlers publish messages that will be queued and drained below; using
+            // RaiseEvent would defer the handler via the SynchronizationContext,
+            // causing it to run after the drain completes on an empty queue.
+            Reconnected?.Invoke(connectionId);
 
             // Messages published while the connection was automatically reconnecting were
             // queued by PublishMessage; drain them now that the connection is restored.
@@ -642,6 +670,7 @@ public class RelayClientPublisher : ITransportPublisher
                     _isDrainingRecovery = false;
                 }
             }
+
             if (shouldDrain)
             {
                 // Schedule a drain retry so queued messages are retried rather than

@@ -808,6 +808,65 @@ public class RelayClientPublisherTests
         }
     }
 
+    [Fact]
+    public async Task DrainQueue_InvocationFailureRetried_MessagesDeliveredInOrder()
+    {
+        await using var host = await FailInvocationRelayHubHost.StartAsync(ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        await using var publisher = new RelayClientPublisher(
+            hubUrl,
+            ValidRoomCode,
+            ValidRelayTicket,
+            logger,
+            DateTimeOffset.UtcNow.AddSeconds(30));
+
+        var received = new List<string>();
+        var allReceived = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        publisher.Subscribe(message =>
+        {
+            lock (received)
+            {
+                received.Add(message.Payload);
+                if (received.Count == 2) allReceived.TrySetResult(true);
+            }
+        });
+
+        // Publish both messages inside the Reconnected handler.  _isDrainingRecovery is
+        // already true, so PublishMessage queues them for FlushOutboundQueueAsync to drain.
+        // The first drain attempt fails (relay attempt 1), triggering
+        // DrainQueueAndClearRecoveryFlag which retries until the server accepts both.
+        // This avoids synchronizing on the Reconnected event itself, which is unreliable
+        // when the test host aborts connections aggressively.
+        publisher.Reconnected += _ =>
+        {
+            publisher.PublishMessage(new TransportMessage
+            {
+                MessageType = "TestCommand",
+                SourceId = Guid.NewGuid(),
+                Payload = "m1"
+            }).GetAwaiter().GetResult();
+            publisher.PublishMessage(new TransportMessage
+            {
+                MessageType = "TestCommand",
+                SourceId = Guid.NewGuid(),
+                Payload = "m2"
+            }).GetAwaiter().GetResult();
+        };
+
+        await publisher.StartAsync();
+        publisher.IsConnected.ShouldBeTrue();
+
+        var completed = await Task.WhenAny(allReceived.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        completed.ShouldBe(allReceived.Task,
+            "Expected all messages delivered in order after invocation failure retry");
+        lock (received)
+        {
+            received.ShouldBe(["m1", "m2"]);
+        }
+    }
+
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
         var deadline = DateTime.UtcNow.AddSeconds(15);
