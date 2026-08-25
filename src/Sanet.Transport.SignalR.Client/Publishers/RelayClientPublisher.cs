@@ -37,14 +37,15 @@ public class RelayClientPublisher : ITransportPublisher
     private readonly Func<CancellationToken, Task<RelayTicketRefresh?>>? _ticketRefresh;
     private readonly int _outboundQueueCapacity;
     private readonly Queue<TransportMessage> _outboundQueue = new();
-    private readonly object _connectionLock = new();
+    private readonly Lock _connectionLock = new();
     private readonly CancellationTokenSource _rebuildCts = new();
     private HubConnection _hubConnection;
-    private DateTimeOffset? _relayTicketExpiresAt;
     private long _sequenceNumber;
     private volatile bool _isDisposed;
     private bool _isRebuilding;
     private Task? _rebuildTask;
+    private HubConnection? _pendingCloseConnection;
+    private readonly Dictionary<HubConnection, Func<Exception?, Task>> _closedHandlers = new();
 
     /// <summary>
     /// Event raised when a peer connects to the room.
@@ -148,7 +149,6 @@ public class RelayClientPublisher : ITransportPublisher
 
         _hubUrl = hubUrl;
         _roomCode = roomCode;
-        _relayTicketExpiresAt = relayTicketExpiresAt;
         _ticketRefresh = ticketRefresh;
         if (outboundQueueCapacity <= 0)
         {
@@ -226,36 +226,48 @@ public class RelayClientPublisher : ITransportPublisher
             throw new ObjectDisposedException(nameof(RelayClientPublisher));
         }
 
-        var connection = CurrentConnection;
-        if (connection.State == HubConnectionState.Connected)
-        {
-            await SendEnvelopeAsync(connection, message);
-            return;
-        }
-
+        HubConnection? sendTarget;
         lock (_connectionLock)
         {
-            if (_isRebuilding || connection.State == HubConnectionState.Reconnecting)
+            // While a rebuild (including its queue flush) is running, messages must be
+            // enqueued so they cannot overtake queued ones mid-flush; direct sends are
+            // allowed only once the rebuild has fully completed, preserving ordering.
+            if (_isRebuilding || _hubConnection.State == HubConnectionState.Reconnecting)
             {
-                if (_outboundQueue.Count >= _outboundQueueCapacity)
-                {
-                    _logger.LogWarning(
-                        "Message rejected: outbound queue is full ({Capacity} messages)",
-                        _outboundQueueCapacity);
-                    throw new TransportPublishException(
-                        PublishFailureReason.QueueFull,
-                        $"Outbound queue is full ({_outboundQueueCapacity} messages).");
-                }
-
-                _outboundQueue.Enqueue(message);
+                EnqueueOrThrowQueueFull(message);
                 return;
             }
+
+            sendTarget = _hubConnection.State == HubConnectionState.Connected
+                ? _hubConnection
+                : null;
+        }
+
+        if (sendTarget is not null)
+        {
+            await SendEnvelopeAsync(sendTarget, message);
+            return;
         }
 
         _logger.LogWarning("Message rejected: relay client is not connected");
         throw new TransportPublishException(
             PublishFailureReason.NotConnected,
             "Relay client is not connected.");
+    }
+
+    private void EnqueueOrThrowQueueFull(TransportMessage message)
+    {
+        if (_outboundQueue.Count >= _outboundQueueCapacity)
+        {
+            _logger.LogWarning(
+                "Message rejected: outbound queue is full ({Capacity} messages)",
+                _outboundQueueCapacity);
+            throw new TransportPublishException(
+                PublishFailureReason.QueueFull,
+                $"Outbound queue is full ({_outboundQueueCapacity} messages).");
+        }
+
+        _outboundQueue.Enqueue(message);
     }
 
     private async Task SendEnvelopeAsync(HubConnection connection, TransportMessage message)
@@ -379,14 +391,32 @@ public class RelayClientPublisher : ITransportPublisher
 
         connection.Reconnecting += OnReconnecting;
         connection.Reconnected += OnReconnected;
-        connection.Closed += OnClosed;
+
+        // The Closed handler must know which connection closed so notifications from
+        // superseded connections can be identified; the delegate is kept to allow detaching.
+        var closedHandler = new Func<Exception?, Task>(exception => OnClosed(connection, exception));
+        lock (_connectionLock)
+        {
+            _closedHandlers[connection] = closedHandler;
+        }
+        connection.Closed += closedHandler;
     }
 
     private void DetachHandlers(HubConnection connection)
     {
         connection.Reconnecting -= OnReconnecting;
         connection.Reconnected -= OnReconnected;
-        connection.Closed -= OnClosed;
+
+        Func<Exception?, Task>? closedHandler;
+        lock (_connectionLock)
+        {
+            _closedHandlers.Remove(connection, out closedHandler);
+        }
+
+        if (closedHandler is not null)
+        {
+            connection.Closed -= closedHandler;
+        }
     }
 
     private void HandleEnvelopeReceived(RelayEnvelope envelope)
@@ -552,15 +582,19 @@ public class RelayClientPublisher : ITransportPublisher
         return Task.CompletedTask;
     }
 
-    private Task OnReconnected(string? connectionId)
+    private async Task OnReconnected(string? connectionId)
     {
         _logger.LogInformation("Relay client reconnected with connection ID {ConnectionId}", connectionId);
 
+        var connection = CurrentConnection;
         RaiseEvent(() => Reconnected?.Invoke(connectionId));
-        return Task.CompletedTask;
+
+        // Messages published while the connection was automatically reconnecting were
+        // queued by PublishMessage; drain them now that the connection is restored.
+        await FlushOutboundQueueAsync(connection);
     }
 
-    private Task OnClosed(Exception? exception)
+    private Task OnClosed(HubConnection connection, Exception? exception)
     {
         if (_isDisposed)
         {
@@ -582,13 +616,20 @@ public class RelayClientPublisher : ITransportPublisher
             return Task.CompletedTask;
         }
 
-        // Fire-and-forget: the SignalR Closed handler must return promptly. The rebuild
-        // flag is taken synchronously here so publishing during the recovery window is
-        // queued rather than rejected as NotConnected.
         lock (_connectionLock)
         {
+            // Ignore notifications from superseded connections whose handlers were
+            // detached concurrently with this callback dispatch.
+            if (!ReferenceEquals(connection, _hubConnection))
+            {
+                return Task.CompletedTask;
+            }
+
             if (_isRebuilding)
             {
+                // Retain the close notification of the current replacement connection so
+                // a follow-up rebuild is scheduled when the active rebuild completes.
+                _pendingCloseConnection = connection;
                 return Task.CompletedTask;
             }
 
@@ -601,8 +642,9 @@ public class RelayClientPublisher : ITransportPublisher
     /// <summary>
     /// Obtains a fresh relay ticket via the refresh delegate, rebuilds the underlying
     /// <see cref="HubConnection"/> around it and restarts it. Single-flight: overlapping
-    /// close notifications while a rebuild runs are ignored (the rebuild flag is already
-    /// held by <see cref="OnClosed"/>). Raises the terminal
+    /// close notifications while a rebuild runs are retained (see <see cref="OnClosed"/>)
+    /// and a follow-up rebuild is scheduled on completion if the current connection
+    /// remains closed. Raises the terminal
     /// <see cref="Closed"/> event when the delegate fails, returns null, or the bounded
     /// restart attempts are exhausted.
     /// </summary>
@@ -614,11 +656,30 @@ public class RelayClientPublisher : ITransportPublisher
         }
         finally
         {
-            lock (_connectionLock)
+            TryScheduleFollowUpRebuild();
+        }
+    }
+
+    private void TryScheduleFollowUpRebuild()
+    {
+        lock (_connectionLock)
+        {
+            _rebuildTask = null;
+            var pendingConnection = _pendingCloseConnection;
+            _pendingCloseConnection = null;
+
+            if (_isDisposed ||
+                pendingConnection is null ||
+                !ReferenceEquals(pendingConnection, _hubConnection) ||
+                pendingConnection.State == HubConnectionState.Connected)
             {
                 _isRebuilding = false;
-                _rebuildTask = null;
+                return;
             }
+
+            _logger.LogInformation(
+                "Replacement relay connection closed while the rebuild was completing; scheduling another rebuild");
+            _rebuildTask = Task.Run(RebuildConnectionAsync);
         }
     }
 
@@ -660,7 +721,6 @@ public class RelayClientPublisher : ITransportPublisher
             oldConnection = _hubConnection;
             DetachHandlers(oldConnection);
             _hubConnection = newConnection;
-            _relayTicketExpiresAt = refresh.ExpiresAt;
         }
 
         AttachHandlers(newConnection);
