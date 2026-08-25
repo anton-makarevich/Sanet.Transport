@@ -37,6 +37,10 @@ public class RelayClientPublisher : ITransportPublisher
     private readonly List<Action<TransportMessage>> _subscribers = [];
     private readonly Func<CancellationToken, Task<RelayTicketRefresh?>>? _ticketRefresh;
     private readonly OutboundMessageQueue _outboundQueue;
+    // Single-flight gate around outbound flushes: the automatic-reconnect path
+    // (OnReconnected) and the ticket-refresh rebuild path can otherwise run
+    // concurrent flushes that dequeue out of order and break FIFO delivery.
+    private readonly SemaphoreSlim _flushGate = new(1, 1);
     private readonly Lock _connectionLock = new();
     private readonly CancellationTokenSource _rebuildCts = new();
 
@@ -284,6 +288,19 @@ public class RelayClientPublisher : ITransportPublisher
     /// </summary>
     private async Task FlushOutboundQueueAsync(HubConnection connection)
     {
+        await _flushGate.WaitAsync();
+        try
+        {
+            await FlushOutboundQueueCoreAsync(connection);
+        }
+        finally
+        {
+            _flushGate.Release();
+        }
+    }
+
+    private async Task FlushOutboundQueueCoreAsync(HubConnection connection)
+    {
         while (!_isDisposed)
         {
             var message = _outboundQueue.TryDequeue();
@@ -497,42 +514,77 @@ public class RelayClientPublisher : ITransportPublisher
             handler();
     }
 
+    // Preserves FIFO delivery when a SynchronizationContext is captured. Contexts
+    // such as xUnit's AsyncTestSyncContext delegate Post to the thread pool, which
+    // gives no execution-order guarantee; queueing notifications and draining them
+    // with a single in-flight post keeps messages ordered for subscribers.
+    private readonly Lock _dispatchLock = new();
+    private readonly Queue<(TransportMessage Message, Action<TransportMessage>[] Subscribers)> _pendingNotifications = new();
+    private bool _dispatchPending;
+
     private void NotifySubscribers(TransportMessage message)
     {
         Action<TransportMessage>[] currentSubscribers;
         lock (_subscribers)
         {
-            currentSubscribers = _subscribers.ToArray();
+            currentSubscribers = [.. _subscribers];
         }
 
         if (_syncContext is not null)
         {
-            _syncContext.Post(_ =>
+            lock (_dispatchLock)
             {
-                foreach (var subscriber in currentSubscribers)
+                _pendingNotifications.Enqueue((message, currentSubscribers));
+                if (_dispatchPending)
                 {
-                    try
-                    {
-                        subscriber(message);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Error notifying subscriber via sync context");
-                    }
+                    return;
                 }
-            }, null);
+
+                _dispatchPending = true;
+            }
+
+            _syncContext.Post(_ => DispatchPendingNotifications(), null);
+            return;
         }
-        else
+
+        foreach (var subscriber in currentSubscribers)
         {
-            foreach (var subscriber in currentSubscribers)
+            try
+            {
+                subscriber(message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error notifying subscriber");
+            }
+        }
+    }
+
+    private void DispatchPendingNotifications()
+    {
+        while (true)
+        {
+            (TransportMessage message, Action<TransportMessage>[] subscribers) item;
+            lock (_dispatchLock)
+            {
+                if (_pendingNotifications.Count == 0)
+                {
+                    _dispatchPending = false;
+                    return;
+                }
+
+                item = _pendingNotifications.Dequeue();
+            }
+
+            foreach (var subscriber in item.subscribers)
             {
                 try
                 {
-                    subscriber(message);
+                    subscriber(item.message);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Error notifying subscriber");
+                    _logger.LogWarning(ex, "Error notifying subscriber via sync context");
                 }
             }
         }
