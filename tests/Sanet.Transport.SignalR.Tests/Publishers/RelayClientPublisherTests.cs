@@ -286,8 +286,7 @@ public class RelayClientPublisherTests
 
     [Fact]
     public void NotifySubscribers_UsesCapturedSynchronizationContext()
-    {
-        var postCalls = 0;
+    {        var postCalls = 0;
         var testSyncContext = new TestSynchronizationContext(() => postCalls++);
 
         var originalContext = SynchronizationContext.Current;
@@ -322,6 +321,67 @@ public class RelayClientPublisherTests
 
             postCalls.ShouldBeGreaterThan(0);
             notified.ShouldBeTrue();
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(originalContext);
+        }
+    }
+
+    [Fact]
+    public async Task NotifySubscribers_ThreadPoolBackedSyncContext_DeliversMessagesInOrder()
+    {
+        const int messageCount = 200;
+        var testSyncContext = new ThreadPoolSynchronizationContext();
+
+        var originalContext = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(testSyncContext);
+
+        try
+        {
+            var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+            var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidRelayTicket, logger);
+
+            var received = new List<int>();
+            var allReceived = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            publisher.Subscribe(message =>
+            {
+                lock (received)
+                {
+                    received.Add(int.Parse(message.Payload));
+                    if (received.Count == messageCount) allReceived.TrySetResult(true);
+                }
+            });
+
+            var method = typeof(RelayClientPublisher).GetMethod("HandleEnvelopeReceived",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            method.ShouldNotBeNull();
+
+            for (var i = 0; i < messageCount; i++)
+            {
+                var message = new TransportMessage
+                {
+                    MessageType = "Test",
+                    SourceId = Guid.NewGuid(),
+                    Payload = i.ToString()
+                };
+                var envelope = new RelayEnvelope(
+                    SenderId: "sender-1",
+                    Payload: JsonSerializer.Serialize(message),
+                    SchemaVersion: "1.0.0",
+                    SequenceNumber: i,
+                    Timestamp: DateTime.UtcNow);
+                method.Invoke(publisher, [envelope]);
+            }
+
+            var completed = await Task.WhenAny(allReceived.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+            completed.ShouldBe(allReceived.Task, "expected every subscriber notification to arrive");
+
+            lock (received)
+            {
+                received.ShouldBe(Enumerable.Range(0, messageCount).ToList(),
+                    "a thread-pool-backed sync context must not reorder subscriber notifications");
+            }
         }
         finally
         {
@@ -1189,5 +1249,18 @@ public class RelayClientPublisherTests
             onPost();
             d(state);
         }
+    }
+
+    /// <summary>
+    /// A synchronization context whose Post hands callbacks straight to the thread pool,
+    /// mirroring contexts like xUnit's AsyncTestSyncContext that give no execution-order
+    /// guarantee for posted continuations.
+    /// </summary>
+    private sealed class ThreadPoolSynchronizationContext : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback d, object? state) =>
+            ThreadPool.QueueUserWorkItem(_ => d(state));
+
+        public override void Send(SendOrPostCallback d, object? state) => d(state);
     }
 }

@@ -49,6 +49,13 @@ public class RelayClientPublisher : ITransportPublisher
     // replaces the former hand-rolled _isRebuilding/_pendingCloseConnection bookkeeping.
     private readonly Channel<byte> _rebuildSignal = Channel.CreateBounded<byte>(
         new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
+
+    // Coalesces overlapping post-reconnect drain requests the same way: at most one
+    // follow-up drain pass is retained, so back-to-back reconnects can never spawn
+    // concurrent retry tasks that overwrite each other's bookkeeping.
+    private readonly Channel<byte> _drainSignal = Channel.CreateBounded<byte>(
+        new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
+    private readonly Task _drainLoopTask;
     private HubConnection _hubConnection;
     private long _sequenceNumber;
     private volatile bool _isDisposed;
@@ -58,9 +65,18 @@ public class RelayClientPublisher : ITransportPublisher
     // All accesses happen under _connectionLock.
     private bool _isTransitioning;
     private readonly Task? _rebuildLoopTask;
-    private Task? _drainRetryTask;
     private int _terminalClosedRaised;
     private readonly Dictionary<HubConnection, Func<Exception?, Task>> _closedHandlers = new();
+
+    // Preserves FIFO delivery when a SynchronizationContext is captured. Contexts
+    // such as xUnit's AsyncTestSyncContext delegate Post to the thread pool, which
+    // gives no execution-order guarantee; queueing notifications and draining them
+    // with a single in-flight post keeps messages ordered for subscribers. The queue
+    // is intentionally unbounded (unlike _outboundQueue): dropping notifications would
+    // silently violate delivery, and inbound match traffic is low-volume.
+    private readonly Lock _dispatchLock = new();
+    private readonly Queue<(TransportMessage Message, Action<TransportMessage>[] Subscribers)> _pendingNotifications = new();
+    private bool _dispatchPending;
 
     /// <summary>
     /// Event raised when a peer connects to the room.
@@ -170,6 +186,10 @@ public class RelayClientPublisher : ITransportPublisher
 
         _hubConnection = BuildConnection(hubUrl, relayTicket, relayTicketExpiresAt);
         AttachHandlers(_hubConnection);
+
+        // The loop runs for the publisher's lifetime; disposal completes the channel
+        // and awaits this task before tearing the connection down.
+        _drainLoopTask = Task.Run(DrainLoopAsync);
 
         if (_ticketRefresh is not null)
         {
@@ -514,14 +534,6 @@ public class RelayClientPublisher : ITransportPublisher
             handler();
     }
 
-    // Preserves FIFO delivery when a SynchronizationContext is captured. Contexts
-    // such as xUnit's AsyncTestSyncContext delegate Post to the thread pool, which
-    // gives no execution-order guarantee; queueing notifications and draining them
-    // with a single in-flight post keeps messages ordered for subscribers.
-    private readonly Lock _dispatchLock = new();
-    private readonly Queue<(TransportMessage Message, Action<TransportMessage>[] Subscribers)> _pendingNotifications = new();
-    private bool _dispatchPending;
-
     private void NotifySubscribers(TransportMessage message)
     {
         Action<TransportMessage>[] currentSubscribers;
@@ -604,13 +616,12 @@ public class RelayClientPublisher : ITransportPublisher
         _isDisposed = true;
         _rebuildCts.Cancel();
         _rebuildSignal.Writer.TryComplete();
+        _drainSignal.Writer.TryComplete();
 
         Task? rebuildLoopTask;
-        Task? drainRetryTask;
         lock (_connectionLock)
         {
             rebuildLoopTask = _rebuildLoopTask;
-            drainRetryTask = _drainRetryTask;
         }
 
         if (rebuildLoopTask is not null)
@@ -625,16 +636,13 @@ public class RelayClientPublisher : ITransportPublisher
             }
         }
 
-        if (drainRetryTask is not null)
+        try
         {
-            try
-            {
-                await drainRetryTask;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "In-flight outbound queue drain retry ended with an error during disposal");
-            }
+            await _drainLoopTask;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "In-flight outbound queue drain loop ended with an error during disposal");
         }
 
         var connection = CurrentConnection;
@@ -647,6 +655,7 @@ public class RelayClientPublisher : ITransportPublisher
 
         await connection.DisposeAsync();
         _rebuildCts.Dispose();
+        _flushGate.Dispose();
 
         RaiseTerminalClosed(null);
 
@@ -702,23 +711,63 @@ public class RelayClientPublisher : ITransportPublisher
 
             if (shouldRetry)
             {
-                // Schedule a drain retry so queued messages are retried rather than
-                // remaining stranded with _isTransitioning still set.
-                _drainRetryTask = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await DrainOutboundQueueAsync(connection);
-                    }
-                    finally
-                    {
-                        lock (_connectionLock)
-                        {
-                            _isTransitioning = false;
-                        }
-                    }
-                });
+                // Coalesced request for exactly one follow-up drain pass. The drain loop
+                // owns the transition gate for that pass; overlapping reconnects can
+                // never orphan a background task by overwriting its reference.
+                _drainSignal.Writer.TryWrite(0);
             }
+        }
+    }
+
+    /// <summary>
+    /// Single-consumer drain loop. Each queued signal runs one
+    /// <see cref="DrainOutboundQueueAsync"/> pass against the current connection and
+    /// releases the transition gate afterwards; overlapping signals are coalesced by
+    /// the bounded channel (see <see cref="OnReconnected"/>). The loop must never
+    /// terminate on an unexpected fault: a throwing iteration is logged and the loop
+    /// keeps serving later signals.
+    /// </summary>
+    private async Task DrainLoopAsync()
+    {
+        try
+        {
+            await foreach (var _ in _drainSignal.Reader.ReadAllAsync(_rebuildCts.Token))
+            {
+                try
+                {
+                    HubConnection connection;
+                    lock (_connectionLock)
+                    {
+                        connection = _hubConnection;
+                    }
+
+                    if (_isDisposed || connection.State != HubConnectionState.Connected)
+                    {
+                        continue;
+                    }
+
+                    await DrainOutboundQueueAsync(connection);
+                }
+                catch (OperationCanceledException) when (_isDisposed)
+                {
+                    // Disposal canceled the in-flight pass.
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Unexpected error while draining the outbound queue");
+                }
+                finally
+                {
+                    lock (_connectionLock)
+                    {
+                        _isTransitioning = false;
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal shutdown: the drain cancellation token fires during disposal.
         }
     }
 
