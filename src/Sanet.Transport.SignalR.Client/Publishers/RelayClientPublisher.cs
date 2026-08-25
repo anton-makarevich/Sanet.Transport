@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Threading.Channels;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Logging;
@@ -35,17 +36,24 @@ public class RelayClientPublisher : ITransportPublisher
     private readonly SynchronizationContext? _syncContext;
     private readonly List<Action<TransportMessage>> _subscribers = [];
     private readonly Func<CancellationToken, Task<RelayTicketRefresh?>>? _ticketRefresh;
-    private readonly int _outboundQueueCapacity;
-    private readonly Queue<TransportMessage> _outboundQueue = new();
+    private readonly OutboundMessageQueue _outboundQueue;
     private readonly Lock _connectionLock = new();
     private readonly CancellationTokenSource _rebuildCts = new();
+
+    // Coalesces overlapping close notifications: the bounded channel retains at most one
+    // pending rebuild request and drops duplicates while one is already queued. This
+    // replaces the former hand-rolled _isRebuilding/_pendingCloseConnection bookkeeping.
+    private readonly Channel<byte> _rebuildSignal = Channel.CreateBounded<byte>(
+        new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
     private HubConnection _hubConnection;
     private long _sequenceNumber;
     private volatile bool _isDisposed;
-    private bool _isRebuilding;
-    private Task? _rebuildTask;
-    private HubConnection? _pendingCloseConnection;
-    private volatile bool _isDrainingRecovery;
+
+    // Set while a recovery transition (automatic reconnect drain or ticket-refresh
+    // rebuild) is in progress, so PublishMessage queues instead of sending directly.
+    // All accesses happen under _connectionLock.
+    private bool _isTransitioning;
+    private readonly Task? _rebuildLoopTask;
     private int _terminalClosedRaised;
     private readonly Dictionary<HubConnection, Func<Exception?, Task>> _closedHandlers = new();
 
@@ -159,10 +167,17 @@ public class RelayClientPublisher : ITransportPublisher
                 "Outbound queue capacity must be greater than zero.");
         }
 
-        _outboundQueueCapacity = outboundQueueCapacity;
+        _outboundQueue = new OutboundMessageQueue(outboundQueueCapacity);
 
         _hubConnection = BuildConnection(hubUrl, relayTicket, relayTicketExpiresAt);
         AttachHandlers(_hubConnection);
+
+        if (_ticketRefresh is not null)
+        {
+            // The loop runs for the publisher's lifetime; disposal completes the channel
+            // and awaits this task before tearing the connection down.
+            _rebuildLoopTask = Task.Run(RebuildLoopAsync);
+        }
     }
 
     /// <summary>
@@ -231,9 +246,9 @@ public class RelayClientPublisher : ITransportPublisher
         HubConnection? sendTarget;
         lock (_connectionLock)
         {
-            if (_isRebuilding || _isDrainingRecovery || _hubConnection.State == HubConnectionState.Reconnecting)
+            if (_isTransitioning || _hubConnection.State == HubConnectionState.Reconnecting)
             {
-                EnqueueOrThrowQueueFull(message);
+                _outboundQueue.EnqueueOrThrow(message, _logger);
                 return;
             }
 
@@ -254,21 +269,6 @@ public class RelayClientPublisher : ITransportPublisher
             "Relay client is not connected.");
     }
 
-    private void EnqueueOrThrowQueueFull(TransportMessage message)
-    {
-        if (_outboundQueue.Count >= _outboundQueueCapacity)
-        {
-            _logger.LogWarning(
-                "Message rejected: outbound queue is full ({Capacity} messages)",
-                _outboundQueueCapacity);
-            throw new TransportPublishException(
-                PublishFailureReason.QueueFull,
-                $"Outbound queue is full ({_outboundQueueCapacity} messages).");
-        }
-
-        _outboundQueue.Enqueue(message);
-    }
-
     private async Task SendEnvelopeAsync(HubConnection connection, TransportMessage message)
     {
         var serializedPayload = JsonSerializer.Serialize(message);
@@ -283,19 +283,15 @@ public class RelayClientPublisher : ITransportPublisher
     }
 
     /// <summary>
-    /// Drains the outbound queue after a successful rebuild, sending each drained message
-    /// outside the lock so concurrent publishes cannot interleave; mid-flush publishes are
-    /// appended to the back of the queue and picked up by this loop.
+    /// Drains the outbound queue, sending each drained message outside the lock so
+    /// concurrent publishes cannot interleave; mid-flush publishes are appended to the
+    /// back of the queue and picked up by this loop.
     /// </summary>
     private async Task FlushOutboundQueueAsync(HubConnection connection)
     {
         while (!_isDisposed)
         {
-            TransportMessage? message;
-            lock (_connectionLock)
-            {
-                message = _outboundQueue.Count > 0 ? _outboundQueue.Dequeue() : null;
-            }
+            var message = _outboundQueue.TryDequeue();
 
             if (message is null)
             {
@@ -310,25 +306,21 @@ public class RelayClientPublisher : ITransportPublisher
             {
                 _logger.LogError(
                     ex,
-                    "Failed to flush queued message after rebuild; requeueing it for the next rebuild");
-                lock (_connectionLock)
-                {
-                    // Requeue the failed message ahead of any messages enqueued mid-flush,
-                    // preserving order, and stop so a subsequent rebuild retries everything.
-                    var remaining = _outboundQueue.ToArray();
-                    _outboundQueue.Clear();
-                    _outboundQueue.Enqueue(message);
-                    foreach (var queued in remaining)
-                    {
-                        _outboundQueue.Enqueue(queued);
-                    }
-                }
+                    "Failed to flush queued message; requeueing it for the next drain attempt");
+                _outboundQueue.RequeueAhead(message);
                 return;
             }
         }
     }
 
-    private async Task DrainQueueAndClearRebuildGate(HubConnection connection)
+    /// <summary>
+    /// Shared drain routine used by both recovery paths (automatic reconnect and
+    /// ticket-refresh rebuild). Retries with backoff while queued messages remain and
+    /// the connection is still connected; returns once the queue is empty, the
+    /// publisher is disposed or the connection dropped (a subsequent close notification
+    /// will trigger the next recovery pass).
+    /// </summary>
+    private async Task DrainOutboundQueueAsync(HubConnection connection)
     {
         var attempt = 0;
         while (!_isDisposed)
@@ -337,37 +329,16 @@ public class RelayClientPublisher : ITransportPublisher
 
             lock (_connectionLock)
             {
-                if (_outboundQueue.Count == 0 || _isDisposed || connection.State != HubConnectionState.Connected)
+                if (_outboundQueue.Count == 0 || _isDisposed ||
+                    connection.State != HubConnectionState.Connected)
                 {
-                    TryScheduleFollowUpRebuild();
                     return;
                 }
             }
 
-            // Keep the rebuild gate set while queued messages remain so PublishMessage
-            // keeps appending to the queue instead of sending directly and overtaking it.
-            await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(100 * ++attempt, 1000)));
-        }
-    }
-
-    private async Task DrainQueueAndClearRecoveryFlag(HubConnection connection)
-    {
-        var attempt = 0;
-        while (!_isDisposed)
-        {
-            await FlushOutboundQueueAsync(connection);
-
-            lock (_connectionLock)
-            {
-                if (_outboundQueue.Count == 0 || _isDisposed || connection.State != HubConnectionState.Connected)
-                {
-                    _isDrainingRecovery = false;
-                    return;
-                }
-            }
-
-            // Keep the recovery flag set while queued messages remain so PublishMessage
-            // keeps appending to the queue instead of sending directly and overtaking it.
+            // The transition gate stays set while queued messages remain so
+            // PublishMessage keeps appending to the queue instead of sending directly
+            // and overtaking it.
             await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(100 * ++attempt, 1000)));
         }
     }
@@ -574,7 +545,7 @@ public class RelayClientPublisher : ITransportPublisher
 
     /// <summary>
     /// Asynchronously disposes the publisher and closes the hub connection.
-    /// Any in-flight ticket-refresh rebuild is canceled.
+    /// Any in-flight ticket-refresh rebuild is canceled and awaited before teardown.
     /// </summary>
     public async ValueTask DisposeAsync()
     {
@@ -585,22 +556,23 @@ public class RelayClientPublisher : ITransportPublisher
 
         _isDisposed = true;
         _rebuildCts.Cancel();
+        _rebuildSignal.Writer.TryComplete();
 
-        Task? rebuildTask;
+        Task? rebuildLoopTask;
         lock (_connectionLock)
         {
-            rebuildTask = _rebuildTask;
+            rebuildLoopTask = _rebuildLoopTask;
         }
 
-        if (rebuildTask is not null)
+        if (rebuildLoopTask is not null)
         {
             try
             {
-                await rebuildTask;
+                await rebuildLoopTask;
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "In-flight relay rebuild ended with an error during disposal");
+                _logger.LogDebug(ex, "In-flight relay rebuild loop ended with an error during disposal");
             }
         }
 
@@ -635,37 +607,56 @@ public class RelayClientPublisher : ITransportPublisher
 
         // Block PublishMessage from sending directly while the queue is being drained
         // so messages published during the drain are appended in order.
-        _isDrainingRecovery = true;
+        lock (_connectionLock)
+        {
+            _isTransitioning = true;
+        }
+
         try
         {
             // Raise the Reconnected event synchronously (not via RaiseEvent) so that
-            // handlers execute while _isDrainingRecovery is still true.  This lets
+            // handlers execute while _isTransitioning is still true.  This lets
             // handlers publish messages that will be queued and drained below; using
             // RaiseEvent would defer the handler via the SynchronizationContext,
             // causing it to run after the drain completes on an empty queue.
             Reconnected?.Invoke(connectionId);
 
             // Messages published while the connection was automatically reconnecting were
-            // queued by PublishMessage; drain them now that the connection is restored.
+            // queued by PublishMessage; flush them now that the connection is restored.
             await FlushOutboundQueueAsync(connection);
         }
         finally
         {
-            bool shouldDrain;
+            bool shouldRetry;
             lock (_connectionLock)
             {
-                shouldDrain = _outboundQueue.Count > 0;
-                if (!shouldDrain)
+                shouldRetry = _outboundQueue.Count > 0 &&
+                              !_isDisposed &&
+                              connection.State == HubConnectionState.Connected;
+                if (!shouldRetry)
                 {
-                    _isDrainingRecovery = false;
+                    _isTransitioning = false;
                 }
             }
 
-            if (shouldDrain)
+            if (shouldRetry)
             {
                 // Schedule a drain retry so queued messages are retried rather than
-                // remaining stranded with _isDrainingRecovery still set.
-                _ = Task.Run(() => DrainQueueAndClearRecoveryFlag(connection));
+                // remaining stranded with _isTransitioning still set.
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await DrainOutboundQueueAsync(connection);
+                    }
+                    finally
+                    {
+                        lock (_connectionLock)
+                        {
+                            _isTransitioning = false;
+                        }
+                    }
+                });
             }
         }
     }
@@ -701,76 +692,98 @@ public class RelayClientPublisher : ITransportPublisher
                 return Task.CompletedTask;
             }
 
-            if (_isRebuilding)
-            {
-                // Retain the close notification of the current replacement connection so
-                // a follow-up rebuild is scheduled when the active rebuild completes.
-                _pendingCloseConnection = connection;
-                return Task.CompletedTask;
-            }
-
-            _isRebuilding = true;
-            _rebuildTask = Task.Run(RebuildConnectionAsync);
+            // Coalescing write: if a signal is already pending it is dropped — exactly
+            // one follow-up pass is retained, matching the previous single-flight logic.
+            _rebuildSignal.Writer.TryWrite(0);
         }
+
         return Task.CompletedTask;
     }
 
     /// <summary>
-    /// Obtains a fresh relay ticket via the refresh delegate, rebuilds the underlying
-    /// <see cref="HubConnection"/> around it and restarts it. Single-flight: overlapping
-    /// close notifications while a rebuild runs are retained (see <see cref="OnClosed"/>)
-    /// and a follow-up rebuild is scheduled on completion if the current connection
-    /// remains closed. Raises the terminal
-    /// <see cref="Closed"/> event when the delegate fails, returns null, or the bounded
-    /// restart attempts are exhausted.
+    /// Single-consumer rebuild loop. Each queued signal runs one recovery pass
+    /// (<see cref="HandleRebuildSignalAsync"/>); overlapping close notifications that
+    /// arrive mid-pass are coalesced into at most one pending signal (see
+    /// <see cref="OnClosed"/>). The loop must never terminate on an unexpected fault:
+    /// a throwing iteration is logged and the loop keeps serving later signals.
     /// </summary>
-    private async Task RebuildConnectionAsync()
+    private async Task RebuildLoopAsync()
     {
         try
         {
+            await foreach (var _ in _rebuildSignal.Reader.ReadAllAsync(_rebuildCts.Token))
+            {
+                try
+                {
+                    await HandleRebuildSignalAsync();
+                }
+                catch (OperationCanceledException) when (_isDisposed)
+                {
+                    // Disposal canceled the in-flight pass.
+                }
+                catch (Exception ex)
+                {
+                    // Never let one bad iteration kill the loop: unexpected errors
+                    // (e.g. throwing event handlers) must not disable future recovery.
+                    _logger.LogError(ex, "Unexpected error while rebuilding the relay connection");
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal shutdown: the rebuild cancellation token fires during disposal.
+        }
+    }
+
+    private async Task HandleRebuildSignalAsync()
+    {
+        if (_isDisposed)
+        {
+            return;
+        }
+
+        lock (_connectionLock)
+        {
+            _isTransitioning = true;
+        }
+
+        try
+        {
+            HubConnection currentConnection;
+            lock (_connectionLock)
+            {
+                currentConnection = _hubConnection;
+            }
+
+            if (currentConnection.State == HubConnectionState.Connected)
+            {
+                // Stale signal: the closed connection has since reconnected automatically
+                // or been rebuilt; only the queued messages still need to reach it.
+                _logger.LogInformation(
+                    "Relay rebuild signal arrived after the connection recovered; flushing the outbound queue");
+                await DrainOutboundQueueAsync(currentConnection);
+                return;
+            }
+
             await RefreshAndRestartAsync();
         }
         finally
         {
-            TryScheduleFollowUpRebuild();
+            lock (_connectionLock)
+            {
+                _isTransitioning = false;
+            }
         }
     }
 
-    private void TryScheduleFollowUpRebuild()
-    {
-        lock (_connectionLock)
-        {
-            _rebuildTask = null;
-            var pendingConnection = _pendingCloseConnection;
-            _pendingCloseConnection = null;
-
-            if (_isDisposed ||
-                pendingConnection is null ||
-                !ReferenceEquals(pendingConnection, _hubConnection))
-            {
-                _isRebuilding = false;
-                return;
-            }
-
-            if (pendingConnection.State == HubConnectionState.Connected)
-            {
-                if (_outboundQueue.Count > 0)
-                {
-                    _logger.LogInformation(
-                        "Replacement relay connection is connected but queued messages remain; scheduling flush");
-                    _rebuildTask = Task.Run(() => DrainQueueAndClearRebuildGate(pendingConnection));
-                    return;
-                }
-                _isRebuilding = false;
-                return;
-            }
-
-            _logger.LogInformation(
-                "Replacement relay connection closed while the rebuild was completing; scheduling another rebuild");
-            _rebuildTask = Task.Run(RebuildConnectionAsync);
-        }
-    }
-
+    /// <summary>
+    /// Obtains a fresh relay ticket via the refresh delegate, rebuilds the underlying
+    /// <see cref="HubConnection"/> around it and restarts it. Runs as one pass of the
+    /// rebuild loop; overlapping close notifications are coalesced by
+    /// <see cref="OnClosed"/> into a follow-up signal. Raises the terminal
+    /// <see cref="Closed"/> event when the delegate fails, returns null, or the bounded
+    /// restart attempts are exhausted.
+    /// </summary>
     private async Task RefreshAndRestartAsync()
     {
         RelayTicketRefresh? refresh;
@@ -867,7 +880,7 @@ public class RelayClientPublisher : ITransportPublisher
 
             RaiseEvent(() => Reconnected?.Invoke(newConnection.ConnectionId));
 
-            await DrainQueueAndClearRebuildGate(newConnection);
+            await DrainOutboundQueueAsync(newConnection);
         }
         finally
         {

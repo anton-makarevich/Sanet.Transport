@@ -630,6 +630,76 @@ public class RelayClientPublisherTests
     }
 
     [Fact]
+    public async Task OnClosed_DuringInFlightRebuild_RetainsSingleFollowUpPassWithoutExtraRefresh()
+    {
+        await using var host = await RebuildTestRelayHubHost.StartAsync(
+            [ValidRelayTicket, RefreshedRelayTicket],
+            abortTicket: ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+
+        var refreshInvocations = 0;
+        var refreshStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRefresh = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        await using var publisher = new RelayClientPublisher(
+            hubUrl,
+            ValidRoomCode,
+            ValidRelayTicket,
+            logger,
+            relayTicketExpiresAt: null,
+            async _ =>
+            {
+                Interlocked.Increment(ref refreshInvocations);
+                refreshStarted.TrySetResult(true);
+                await releaseRefresh.Task;
+                return new RelayTicketRefresh(
+                    RefreshedRelayTicket, DateTimeOffset.UtcNow.AddSeconds(60));
+            });
+
+        var closedCount = 0;
+        publisher.Closed += _ => Interlocked.Increment(ref closedCount);
+
+        await publisher.StartAsync();
+        publisher.IsConnected.ShouldBeTrue();
+
+        // Wait until the drop started a rebuild that is blocked inside the refresh
+        // delegate; the single-consumer loop is now provably busy processing pass one.
+        var started = await Task.WhenAny(refreshStarted.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        started.ShouldBe(refreshStarted.Task, "expected the rebuild to start after the drop");
+
+        // A further close notification arrives while the rebuild is in flight. The
+        // bounded channel must retain it as exactly one queued follow-up signal rather
+        // than spawning a concurrent rebuild.
+        var onClosed = typeof(RelayClientPublisher).GetMethod("OnClosed",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        onClosed.ShouldNotBeNull();
+        var currentConnectionField = typeof(RelayClientPublisher).GetField("_hubConnection",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        currentConnectionField.ShouldNotBeNull();
+        var currentConnection = (HubConnection)currentConnectionField.GetValue(publisher)!;
+        await (Task)onClosed.Invoke(publisher, [currentConnection, null])!;
+
+        // Complete the in-flight rebuild with a fresh ticket.
+        releaseRefresh.TrySetResult(true);
+
+        // The rebuilt connection stays up, so the follow-up pass observes it already
+        // connected and must not perform another ticket refresh nor raise Closed.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!publisher.IsConnected && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+        // Yield so the follow-up pass has time to run before asserting on its effects.
+        await Task.Delay(500);
+
+        publisher.IsConnected.ShouldBeTrue("the rebuilt connection must remain connected");
+        Interlocked.CompareExchange(ref refreshInvocations, 0, 0).ShouldBe(1,
+            "the coalesced follow-up pass must not trigger a second ticket refresh once the connection recovered");
+        Volatile.Read(ref closedCount).ShouldBe(0,
+            "no terminal Closed may be raised when both passes complete successfully");
+    }
+
+    [Fact]
     public async Task DisposeAsync_WhenNotStarted_RaisesClosedExactlyOnce()
     {
         // Arrange
@@ -837,7 +907,7 @@ public class RelayClientPublisherTests
             }
         });
 
-        // Publish a message inside the Reconnected handler.  Because _isDrainingRecovery
+        // Publish a message inside the Reconnected handler.  Because _isTransitioning
         // is set before Reconnected fires, PublishMessage must queue the message so
         // FlushOutboundQueueAsync drains it in order.
         publisher.Reconnected += _ =>
@@ -887,10 +957,10 @@ public class RelayClientPublisherTests
             }
         });
 
-        // Publish both messages inside the Reconnected handler.  _isDrainingRecovery is
-        // already true, so PublishMessage queues them for FlushOutboundQueueAsync to drain.
-        // The first drain attempt fails (relay attempt 1), triggering
-        // DrainQueueAndClearRecoveryFlag which retries until the server accepts both.
+        // Publish both messages inside the Reconnected handler.  _isTransitioning is
+        // already true, so PublishMessage queues them for FlushOutboundQueueAsync to
+        // drain. The first drain attempt fails (relay attempt 1), triggering
+        // DrainOutboundQueueAsync which retries until the server accepts both.
         // This avoids synchronizing on the Reconnected event itself, which is unreliable
         // when the test host aborts connections aggressively.
         publisher.Reconnected += _ =>
