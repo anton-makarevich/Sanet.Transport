@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using NSubstitute;
 using Sanet.Transport.SignalR.Client.Relay;
 using Sanet.Transport.SignalR.Hub.Relay;
@@ -49,7 +50,11 @@ public class RelayHubTests
         roomManager.RegisterConnection(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<string>())
             .Returns((string?)null);
         roomManager.GetHostConnectionId(Arg.Any<string>()).Returns((string?)null);
-        var hub = CreateHub(logger, rateLimiter, roomManager);
+        var hub = CreateHub(
+            logger,
+            rateLimiter,
+            roomManager,
+            options: new Configuration.HubOptions { HostConnectionWaitSeconds = 0 });
         var groups = Substitute.For<IGroupManager>();
         groups.AddToGroupAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.CompletedTask);
         hub.Groups = groups;
@@ -62,6 +67,80 @@ public class RelayHubTests
 
         logger.GetMessages(LogLevel.Warning).ShouldContain(
             message => message.Contains("found no host connection", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task OnConnectedAsync_ClientConnectsBeforeHost_RegistersDuringWait_NotifiesHost()
+    {
+        var roomManager = Substitute.For<IRoomManager>();
+        roomManager.RegisterConnection(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<string>())
+            .Returns((string?)null);
+        roomManager.GetHostConnectionId("ROOM1").Returns((string?)null, "host-conn");
+        var scheduler = Substitute.For<IPeerNotificationScheduler>();
+        var timeProvider = new FakeTimeProvider();
+        var hub = CreateHub(
+            roomManager: roomManager,
+            scheduler: scheduler,
+            options: new Configuration.HubOptions { HostConnectionWaitSeconds = 5 },
+            timeProvider: timeProvider);
+        var groups = Substitute.For<IGroupManager>();
+        groups.AddToGroupAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.CompletedTask);
+        hub.Groups = groups;
+
+        var hostClients = Substitute.For<IRelayHub>();
+        var clients = Substitute.For<IHubCallerClients<IRelayHub>>();
+        clients.Client("host-conn").Returns(hostClients);
+        hub.Clients = clients;
+
+        var session = new RoomSession(
+            "tok", "ROOM1", Guid.NewGuid(), RoomRole.Client, DateTimeOffset.UtcNow.AddHours(1));
+        hub.Context = ContextForSession(session);
+
+        var connectTask = hub.OnConnectedAsync();
+        while (!connectTask.IsCompleted)
+        {
+            timeProvider.Advance(TimeSpan.FromMilliseconds(100));
+        }
+        await connectTask;
+
+        scheduler.Received(1).CancelDisconnectNotification("ROOM1", session.DeviceSessionId);
+        await hostClients.Received(1).OnPeerConnected(session.DeviceSessionId.ToString());
+    }
+
+    [Fact]
+    public async Task OnConnectedAsync_ClientConnectsBeforeHost_WaitExpires_LogsWarning_AndDoesNotNotify()
+    {
+        var logger = new CapturingLogger<RelayHub>();
+        var roomManager = Substitute.For<IRoomManager>();
+        roomManager.RegisterConnection(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<string>())
+            .Returns((string?)null);
+        roomManager.GetHostConnectionId("ROOM1").Returns((string?)null);
+        var scheduler = Substitute.For<IPeerNotificationScheduler>();
+        var timeProvider = new FakeTimeProvider();
+        var hub = CreateHub(
+            logger,
+            roomManager: roomManager,
+            scheduler: scheduler,
+            options: new Configuration.HubOptions { HostConnectionWaitSeconds = 5 },
+            timeProvider: timeProvider);
+        var groups = Substitute.For<IGroupManager>();
+        groups.AddToGroupAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.CompletedTask);
+        hub.Groups = groups;
+
+        var session = new RoomSession(
+            "tok", "ROOM1", Guid.NewGuid(), RoomRole.Client, DateTimeOffset.UtcNow.AddHours(1));
+        hub.Context = ContextForSession(session);
+
+        var connectTask = hub.OnConnectedAsync();
+        while (!connectTask.IsCompleted)
+        {
+            timeProvider.Advance(TimeSpan.FromMilliseconds(100));
+        }
+        await connectTask;
+
+        logger.GetMessages(LogLevel.Warning).ShouldContain(
+            message => message.Contains("found no host connection", StringComparison.Ordinal));
+        scheduler.DidNotReceive().CancelDisconnectNotification(Arg.Any<string>(), Arg.Any<Guid>());
     }
 
     [Fact]
@@ -127,7 +206,7 @@ public class RelayHubTests
         var options = Options.Create(new Configuration.HubOptions());
         var hub = new RelayHub(
             rateLimiter, roomManager, Substitute.For<IPeerNotificationScheduler>(), options,
-            NullLogger<RelayHub>.Instance);
+            TimeProvider.System, NullLogger<RelayHub>.Instance);
 
         var roomCode = "ROOM1";
         var session = new RoomSession("tok", roomCode, Guid.NewGuid(), RoomRole.Client,
@@ -200,7 +279,8 @@ public class RelayHubTests
             .Returns("test-connection-id");
         var options = Options.Create(new Configuration.HubOptions { MaxRelayPayloadBytes = 4 });
         var hub = new RelayHub(
-            rateLimiter, roomManager, Substitute.For<IPeerNotificationScheduler>(), options, logger);
+            rateLimiter, roomManager, Substitute.For<IPeerNotificationScheduler>(), options,
+            TimeProvider.System, logger);
         hub.Context = ContextForSession(new RoomSession(
             "tok", "ROOM1", Guid.NewGuid(), RoomRole.Client, DateTimeOffset.UtcNow.AddHours(1)));
         hub.Clients = Substitute.For<IHubCallerClients<IRelayHub>>();
@@ -381,16 +461,18 @@ public class RelayHubTests
         ILogger<RelayHub>? logger = null,
         IRelayRateLimiter? rateLimiter = null,
         IRoomManager? roomManager = null,
-        IPeerNotificationScheduler? scheduler = null)
+        IPeerNotificationScheduler? scheduler = null,
+        Configuration.HubOptions? options = null,
+        TimeProvider? timeProvider = null)
     {
         rateLimiter ??= Substitute.For<IRelayRateLimiter>();
         roomManager ??= Substitute.For<IRoomManager>();
-        var options = Options.Create(new Configuration.HubOptions());
         return new RelayHub(
             rateLimiter,
             roomManager,
             scheduler ?? Substitute.For<IPeerNotificationScheduler>(),
-            options,
+            Options.Create(options ?? new Configuration.HubOptions()),
+            timeProvider ?? TimeProvider.System,
             logger ?? NullLogger<RelayHub>.Instance);
     }
 

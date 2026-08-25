@@ -23,10 +23,17 @@ public sealed class RelayHub : Hub<IRelayHub>
     /// </summary>
     public const int ReceiveMessageSizeOverheadBytes = 64 * 1024;
 
+    /// <summary>
+    /// Interval between polls of the room manager while waiting for the host
+    /// connection to register during a client connect.
+    /// </summary>
+    private static readonly TimeSpan HostConnectionPollInterval = TimeSpan.FromMilliseconds(100);
+
     private readonly IRelayRateLimiter _rateLimiter;
     private readonly IRoomManager _roomManager;
     private readonly IPeerNotificationScheduler _notificationScheduler;
     private readonly IOptions<HubOptions> _options;
+    private readonly TimeProvider _timeProvider;
     private readonly ILogger<RelayHub> _logger;
 
     public RelayHub(
@@ -34,12 +41,14 @@ public sealed class RelayHub : Hub<IRelayHub>
         IRoomManager roomManager,
         IPeerNotificationScheduler notificationScheduler,
         IOptions<HubOptions> options,
+        TimeProvider timeProvider,
         ILogger<RelayHub> logger)
     {
         _rateLimiter = rateLimiter;
         _roomManager = roomManager;
         _notificationScheduler = notificationScheduler;
         _options = options;
+        _timeProvider = timeProvider;
         _logger = logger;
     }
 
@@ -94,7 +103,11 @@ public sealed class RelayHub : Hub<IRelayHub>
 
         if (session.Role == RoomRole.Client)
         {
-            var hostConnectionId = _roomManager.GetHostConnectionId(session.RoomCode);
+            // The host may still be completing its own handshake when a fast client
+            // connects; briefly wait for it instead of dropping the announcement.
+            var hostConnectionId = await WaitForHostConnectionAsync(
+                session.RoomCode, Context.ConnectionAborted);
+
             if (hostConnectionId is not null)
             {
                 // A reconnect cancels any pending disconnect notification for the same
@@ -116,6 +129,39 @@ public sealed class RelayHub : Hub<IRelayHub>
         }
 
         await base.OnConnectedAsync();
+    }
+
+    /// <summary>
+    /// Resolves the room host's connection id, waiting up to
+    /// <see cref="HubOptions.HostConnectionWaitSeconds"/> for the host to register
+    /// when it has not connected yet. Returns <c>null</c> immediately when the wait
+    /// is disabled or expires.
+    /// </summary>
+    private async Task<string?> WaitForHostConnectionAsync(string roomCode, CancellationToken cancellationToken)
+    {
+        var timeout = TimeSpan.FromSeconds(
+            Math.Max(0, _options.Value.HostConnectionWaitSeconds));
+        var startTimestamp = _timeProvider.GetTimestamp();
+
+        while (true)
+        {
+            var hostConnectionId = _roomManager.GetHostConnectionId(roomCode);
+            if (hostConnectionId is not null
+                || _timeProvider.GetElapsedTime(startTimestamp) >= timeout)
+            {
+                return hostConnectionId;
+            }
+
+            try
+            {
+                await Task.Delay(HostConnectionPollInterval, _timeProvider, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
+        }
     }
 
     public async Task Relay(string roomCode, RelayEnvelope? message)
