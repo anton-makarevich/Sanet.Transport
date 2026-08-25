@@ -579,13 +579,24 @@ public class RelayClientPublisherTests
             _ => Task.FromException<RelayTicketRefresh?>(new InvalidOperationException("refresh failed")));
 
         var closed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        publisher.Closed += _ => closed.TrySetResult(true);
+        var closedCount = 0;
+        publisher.Closed += _ =>
+        {
+            Interlocked.Increment(ref closedCount);
+            closed.TrySetResult(true);
+        };
 
         await publisher.StartAsync();
         publisher.IsConnected.ShouldBeTrue();
 
         var completed = await Task.WhenAny(closed.Task, Task.Delay(TimeSpan.FromSeconds(10)));
         completed.ShouldBe(closed.Task, "Expected terminal Closed when ticket refresh throws");
+
+        // Yield so any duplicate notification could surface, then confirm the
+        // at-most-once guard still holds under the rebuild-loop structure.
+        await Task.Delay(500);
+        Volatile.Read(ref closedCount).ShouldBe(1,
+            "Closed must be raised exactly once even if further close notifications arrive");
     }
 
     [Fact]
@@ -669,7 +680,9 @@ public class RelayClientPublisherTests
 
         // A further close notification arrives while the rebuild is in flight. The
         // bounded channel must retain it as exactly one queued follow-up signal rather
-        // than spawning a concurrent rebuild.
+        // than spawning a concurrent rebuild. Two back-to-back notifications prove
+        // coalescing itself: with the single-consumer loop busy inside the refresh,
+        // the first write fills the channel and the second is dropped.
         var onClosed = typeof(RelayClientPublisher).GetMethod("OnClosed",
             BindingFlags.NonPublic | BindingFlags.Instance);
         onClosed.ShouldNotBeNull();
@@ -677,6 +690,7 @@ public class RelayClientPublisherTests
             BindingFlags.NonPublic | BindingFlags.Instance);
         currentConnectionField.ShouldNotBeNull();
         var currentConnection = (HubConnection)currentConnectionField.GetValue(publisher)!;
+        await (Task)onClosed.Invoke(publisher, [currentConnection, null])!;
         await (Task)onClosed.Invoke(publisher, [currentConnection, null])!;
 
         // Complete the in-flight rebuild with a fresh ticket.

@@ -160,12 +160,6 @@ public class RelayClientPublisher : ITransportPublisher
         _hubUrl = hubUrl;
         _roomCode = roomCode;
         _ticketRefresh = ticketRefresh;
-        if (outboundQueueCapacity <= 0)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(outboundQueueCapacity),
-                "Outbound queue capacity must be greater than zero.");
-        }
 
         _outboundQueue = new OutboundMessageQueue(outboundQueueCapacity);
 
@@ -757,8 +751,13 @@ public class RelayClientPublisher : ITransportPublisher
 
             if (currentConnection.State == HubConnectionState.Connected)
             {
-                // Stale signal: the closed connection has since reconnected automatically
-                // or been rebuilt; only the queued messages still need to reach it.
+                // Defensive: through natural SignalR events this is not reachable today
+                // (Closed fires once per connection, after automatic reconnect has given
+                // up). It guards against spurious or duplicate close notifications that
+                // arrive while a pass is in flight: when the connection has already
+                // recovered by the time the coalesced signal is dequeued, only the
+                // queued messages still need to reach it — a full ticket refresh would
+                // be wasted work. Exercised by the duplicate-close coalescing test.
                 _logger.LogInformation(
                     "Relay rebuild signal arrived after the connection recovered; flushing the outbound queue");
                 await DrainOutboundQueueAsync(currentConnection);
