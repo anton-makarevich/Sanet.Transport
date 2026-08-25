@@ -54,6 +54,7 @@ public class RelayClientPublisher : ITransportPublisher
     // All accesses happen under _connectionLock.
     private bool _isTransitioning;
     private readonly Task? _rebuildLoopTask;
+    private Task? _drainRetryTask;
     private int _terminalClosedRaised;
     private readonly Dictionary<HubConnection, Func<Exception?, Task>> _closedHandlers = new();
 
@@ -553,9 +554,11 @@ public class RelayClientPublisher : ITransportPublisher
         _rebuildSignal.Writer.TryComplete();
 
         Task? rebuildLoopTask;
+        Task? drainRetryTask;
         lock (_connectionLock)
         {
             rebuildLoopTask = _rebuildLoopTask;
+            drainRetryTask = _drainRetryTask;
         }
 
         if (rebuildLoopTask is not null)
@@ -567,6 +570,18 @@ public class RelayClientPublisher : ITransportPublisher
             catch (Exception ex)
             {
                 _logger.LogDebug(ex, "In-flight relay rebuild loop ended with an error during disposal");
+            }
+        }
+
+        if (drainRetryTask is not null)
+        {
+            try
+            {
+                await drainRetryTask;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "In-flight outbound queue drain retry ended with an error during disposal");
             }
         }
 
@@ -637,7 +652,7 @@ public class RelayClientPublisher : ITransportPublisher
             {
                 // Schedule a drain retry so queued messages are retried rather than
                 // remaining stranded with _isTransitioning still set.
-                _ = Task.Run(async () =>
+                _drainRetryTask = Task.Run(async () =>
                 {
                     try
                     {

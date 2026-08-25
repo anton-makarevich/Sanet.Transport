@@ -795,6 +795,7 @@ public class RelayClientPublisherTests
         var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
 
         var refreshGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var logger = Substitute.For<ILogger<RelayClientPublisher>>();
         await using var publisher = new RelayClientPublisher(
             hubUrl,
@@ -804,6 +805,7 @@ public class RelayClientPublisherTests
             relayTicketExpiresAt: null,
             async _ =>
             {
+                refreshStarted.TrySetResult(true);
                 await refreshGate.Task;
                 return new RelayTicketRefresh(
                     RefreshedRelayTicket, DateTimeOffset.UtcNow.AddSeconds(60));
@@ -824,7 +826,7 @@ public class RelayClientPublisherTests
         publisher.IsConnected.ShouldBeTrue();
 
         // Wait for the drop and the blocked refresh (rebuild in progress).
-        await WaitUntilAsync(() => !publisher.IsConnected);
+        await refreshStarted.Task;
 
         // Publishing while the rebuild is in flight must queue, not throw.
         foreach (var payload in new[] { "m1", "m2", "m3" })
@@ -856,6 +858,7 @@ public class RelayClientPublisherTests
         var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
 
         var refreshGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var logger = Substitute.For<ILogger<RelayClientPublisher>>();
         await using var publisher = new RelayClientPublisher(
             hubUrl,
@@ -867,6 +870,7 @@ public class RelayClientPublisherTests
             {
                 // Hold the rebuild in-flight while messages are published; disposal
                 // cancels the token, ending the hold without invoking real refresh.
+                refreshStarted.TrySetResult(true);
                 try
                 {
                     await refreshGate.Task.WaitAsync(ct);
@@ -880,7 +884,7 @@ public class RelayClientPublisherTests
             outboundQueueCapacity: 2);
 
         await publisher.StartAsync();
-        await WaitUntilAsync(() => !publisher.IsConnected);
+        await refreshStarted.Task;
 
         TransportMessage Make(string payload) => new()
         {
@@ -1091,6 +1095,7 @@ public class RelayClientPublisherTests
 
         var logger = Substitute.For<ILogger<RelayClientPublisher>>();
         var refreshGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var publisher = new RelayClientPublisher(
             hubUrl,
             ValidRoomCode,
@@ -1099,6 +1104,7 @@ public class RelayClientPublisherTests
             relayTicketExpiresAt: null,
             async _ =>
             {
+                refreshStarted.TrySetResult(true);
                 await refreshGate.Task;
                 return new RelayTicketRefresh(
                     RefreshedRelayTicket, DateTimeOffset.UtcNow.AddSeconds(60));
@@ -1120,7 +1126,7 @@ public class RelayClientPublisherTests
 
         // Wait for the drop; messages published during the rebuild must be queued.
         // The refresh is gated so the rebuild stays pending until the messages are queued.
-        await WaitUntilAsync(() => !publisher.IsConnected);
+        await refreshStarted.Task;
         foreach (var payload in new[] { "m1", "m2" })
         {
             await publisher.PublishMessage(new TransportMessage
