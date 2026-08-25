@@ -47,6 +47,7 @@ public class RelayClientPublisher : ITransportPublisher
     private Task? _rebuildTask;
     private HubConnection? _pendingCloseConnection;
     private volatile bool _isDrainingRecovery;
+    private int _terminalClosedRaised;
     private readonly Dictionary<HubConnection, Func<Exception?, Task>> _closedHandlers = new();
 
     /// <summary>
@@ -627,6 +628,8 @@ public class RelayClientPublisher : ITransportPublisher
         await connection.DisposeAsync();
         _rebuildCts.Dispose();
 
+        RaiseTerminalClosed(null);
+
         GC.SuppressFinalize(this);
     }
 
@@ -897,6 +900,13 @@ public class RelayClientPublisher : ITransportPublisher
 
     private void RaiseTerminalClosed(Exception? exception)
     {
+        // Raise Closed at most once: disposal and a concurrent terminal rebuild
+        // failure must not produce duplicate notifications.
+        if (Interlocked.Exchange(ref _terminalClosedRaised, 1) != 0)
+        {
+            return;
+        }
+
         // Terminal close contract: Closed fires when no refresh delegate is configured,
         // when the delegate fails or returns no ticket, when the bounded restart attempts
         // are exhausted, or when the publisher is disposed. Callers must obtain a fresh
