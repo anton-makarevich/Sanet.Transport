@@ -630,6 +630,60 @@ public class RelayClientPublisherTests
     }
 
     [Fact]
+    public async Task DisposeAsync_WhenNotStarted_RaisesClosedExactlyOnce()
+    {
+        // Arrange
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        var publisher = new RelayClientPublisher(ValidHubUrl, ValidRoomCode, ValidRelayTicket, logger);
+        var closedCount = 0;
+        publisher.Closed += _ => Interlocked.Increment(ref closedCount);
+
+        // Act
+        await publisher.DisposeAsync();
+        await publisher.DisposeAsync();
+
+        // Closed is delivered via the captured synchronization context; yield until it arrives.
+        await WaitUntilAsync(() => Volatile.Read(ref closedCount) > 0);
+
+        // Assert
+        Interlocked.CompareExchange(ref closedCount, 0, 0).ShouldBe(1,
+            "Closed must be raised exactly once during disposal");
+    }
+
+    [Fact]
+    public async Task DisposeAsync_WhenConnected_RaisesClosedExactlyOnce()
+    {
+        await using var host = await RebuildTestRelayHubHost.StartAsync([ValidRelayTicket], abortTicket: ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        var publisher = new RelayClientPublisher(
+            hubUrl,
+            ValidRoomCode,
+            ValidRelayTicket,
+            logger,
+            relayTicketExpiresAt: null,
+            ct => Task.Delay(Timeout.InfiniteTimeSpan, ct)
+                .ContinueWith<RelayTicketRefresh?>(_ => null, TaskScheduler.Default));
+
+        var closedCount = 0;
+        publisher.Closed += _ => Interlocked.Increment(ref closedCount);
+
+        await publisher.StartAsync();
+        publisher.IsConnected.ShouldBeTrue();
+
+        await publisher.DisposeAsync();
+
+        publisher.IsConnected.ShouldBeFalse();
+
+        // Closed is delivered via the captured synchronization context; yield until it arrives.
+        await WaitUntilAsync(() => Volatile.Read(ref closedCount) > 0);
+
+        Interlocked.CompareExchange(ref closedCount, 0, 0).ShouldBe(1,
+            "Closed must be raised exactly once even when stopping the connection fires close notifications");
+    }
+
+    [Fact]
     public async Task PublishMessage_WhenDisconnected_ThrowsTransportPublishExceptionNotConnected()
     {
         // Arrange
