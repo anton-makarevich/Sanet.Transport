@@ -1,13 +1,13 @@
 using System.Reflection;
 using System.Text.Json;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Sanet.Transport.SignalR.Client.Publishers;
 using Sanet.Transport.SignalR.Client.Relay;
 using Shouldly;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace Sanet.Transport.SignalR.Tests.Publishers;
 
@@ -791,7 +791,7 @@ public class RelayClientPublisherTests
                 {
                 }
 
-                return (RelayTicketRefresh?)null;
+                return null;
             },
             outboundQueueCapacity: 2);
 
@@ -918,6 +918,81 @@ public class RelayClientPublisherTests
         lock (received)
         {
             received.ShouldBe(["m1", "m2"]);
+        }
+    }
+
+    [Fact]
+    public async Task DrainQueue_RepeatedInvocationFailures_PublishDuringDrainDeliveredInOrder()
+    {
+        await using var host = await DrainRetryRelayHubHost.StartAsync(ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+        var relayCounter = host.Services.GetRequiredService<DrainInvocationCounter>();
+        var drainGate = host.Services.GetRequiredService<DrainGate>();
+
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        await using var publisher = new RelayClientPublisher(
+            hubUrl,
+            ValidRoomCode,
+            ValidRelayTicket,
+            logger,
+            DateTimeOffset.UtcNow.AddSeconds(30));
+
+        var received = new List<string>();
+        var allReceived = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        publisher.Subscribe(message =>
+        {
+            lock (received)
+            {
+                received.Add(message.Payload);
+                if (received.Count == 3) allReceived.TrySetResult(true);
+            }
+        });
+
+        // Publish two messages inside the Reconnected handler so they are queued for
+        // the post-reconnect drain. The hub then fails DrainRetryRelayHub.FailUntilRelayCount
+        // consecutive invocations while still connected, exercising more retries than the
+        // drain previously allowed before clearing its recovery gate.
+        publisher.Reconnected += _ =>
+        {
+            foreach (var payload in new[] { "m1", "m2" })
+            {
+                publisher.PublishMessage(new TransportMessage
+                {
+                    MessageType = "TestCommand",
+                    SourceId = Guid.NewGuid(),
+                    Payload = payload
+                }).GetAwaiter().GetResult();
+            }
+        };
+
+        await publisher.StartAsync();
+        publisher.IsConnected.ShouldBeTrue();
+
+        // Once all configured invocation failures have been consumed by the drain,
+        // publish another message: it must be appended to the queue (not sent directly),
+        // preserving FIFO delivery ahead of the blocked-but-pending queue contents.
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (relayCounter.Count < DrainRetryRelayHub.FailUntilRelayCount && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+        relayCounter.Count.ShouldBeGreaterThanOrEqualTo(DrainRetryRelayHub.FailUntilRelayCount);
+
+        await publisher.PublishMessage(new TransportMessage
+        {
+            MessageType = "TestCommand",
+            SourceId = Guid.NewGuid(),
+            Payload = "m3"
+        });
+
+        drainGate.Release();
+
+        var completed = await Task.WhenAny(allReceived.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+        completed.ShouldBe(allReceived.Task,
+            "Expected all messages delivered in order after repeated invocation failures");
+        lock (received)
+        {
+            received.ShouldBe(["m1", "m2", "m3"]);
         }
     }
 

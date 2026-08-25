@@ -28,7 +28,6 @@ public class RelayClientPublisher : ITransportPublisher
 {
     private const int MaxRestartAttempts = 3;
     private const int DefaultOutboundQueueCapacity = 500;
-    private const int MaxDrainRetries = 5;
 
     private readonly string _hubUrl;
     private readonly string _roomCode;
@@ -331,7 +330,8 @@ public class RelayClientPublisher : ITransportPublisher
 
     private async Task DrainQueueAndClearRebuildGate(HubConnection connection)
     {
-        for (var attempt = 0; attempt <= MaxDrainRetries; attempt++)
+        var attempt = 0;
+        while (!_isDisposed)
         {
             await FlushOutboundQueueAsync(connection);
 
@@ -342,24 +342,18 @@ public class RelayClientPublisher : ITransportPublisher
                     TryScheduleFollowUpRebuild();
                     return;
                 }
-
-                if (attempt >= MaxDrainRetries)
-                {
-                    _logger.LogWarning(
-                        "Drain queue exceeded maximum retry attempts ({MaxRetries}); clearing rebuild gate",
-                        MaxDrainRetries);
-                    TryScheduleFollowUpRebuild();
-                    return;
-                }
             }
 
-            await Task.Delay(TimeSpan.FromMilliseconds(100 * (attempt + 1)));
+            // Keep the rebuild gate set while queued messages remain so PublishMessage
+            // keeps appending to the queue instead of sending directly and overtaking it.
+            await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(100 * ++attempt, 1000)));
         }
     }
 
     private async Task DrainQueueAndClearRecoveryFlag(HubConnection connection)
     {
-        for (var attempt = 0; attempt <= MaxDrainRetries; attempt++)
+        var attempt = 0;
+        while (!_isDisposed)
         {
             await FlushOutboundQueueAsync(connection);
 
@@ -370,18 +364,11 @@ public class RelayClientPublisher : ITransportPublisher
                     _isDrainingRecovery = false;
                     return;
                 }
-
-                if (attempt >= MaxDrainRetries)
-                {
-                    _logger.LogWarning(
-                        "Recovery drain exceeded maximum retry attempts ({MaxRetries}); clearing recovery flag",
-                        MaxDrainRetries);
-                    _isDrainingRecovery = false;
-                    return;
-                }
             }
 
-            await Task.Delay(TimeSpan.FromMilliseconds(100 * (attempt + 1)));
+            // Keep the recovery flag set while queued messages remain so PublishMessage
+            // keeps appending to the queue instead of sending directly and overtaking it.
+            await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(100 * ++attempt, 1000)));
         }
     }
 
