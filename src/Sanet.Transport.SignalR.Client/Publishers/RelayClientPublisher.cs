@@ -331,6 +331,36 @@ public class RelayClientPublisher : ITransportPublisher
         }
     }
 
+    private async Task DrainQueueAndClearRebuildGate(HubConnection connection)
+    {
+        await FlushOutboundQueueAsync(connection);
+
+        lock (_connectionLock)
+        {
+            if (_outboundQueue.Count == 0 || _isDisposed || connection.State != HubConnectionState.Connected)
+            {
+                TryScheduleFollowUpRebuild();
+                return;
+            }
+        }
+        _ = Task.Run(() => DrainQueueAndClearRebuildGate(connection));
+    }
+
+    private async Task DrainQueueAndClearRecoveryFlag(HubConnection connection)
+    {
+        await FlushOutboundQueueAsync(connection);
+
+        lock (_connectionLock)
+        {
+            if (_outboundQueue.Count == 0 || _isDisposed || connection.State != HubConnectionState.Connected)
+            {
+                _isDrainingRecovery = false;
+                return;
+            }
+        }
+        _ = Task.Run(() => DrainQueueAndClearRecoveryFlag(connection));
+    }
+
     /// <summary>
     /// Subscribes to receive transport messages from the relay.
     /// </summary>
@@ -603,16 +633,20 @@ public class RelayClientPublisher : ITransportPublisher
         }
         finally
         {
-            // Only clear the flag when the queue was fully emptied. When flushing fails
-            // FlushOutboundQueueAsync requeues the failed message and returns; keeping the
-            // flag set ensures subsequent publishes continue to queue so messages remain
-            // ordered and will be retried on the next rebuild.
+            bool shouldDrain;
             lock (_connectionLock)
             {
-                if (_outboundQueue.Count == 0)
+                shouldDrain = _outboundQueue.Count > 0;
+                if (!shouldDrain)
                 {
                     _isDrainingRecovery = false;
                 }
+            }
+            if (shouldDrain)
+            {
+                // Schedule a drain retry so queued messages are retried rather than
+                // remaining stranded with _isDrainingRecovery still set.
+                _ = Task.Run(() => DrainQueueAndClearRecoveryFlag(connection));
             }
         }
     }
@@ -693,9 +727,21 @@ public class RelayClientPublisher : ITransportPublisher
 
             if (_isDisposed ||
                 pendingConnection is null ||
-                !ReferenceEquals(pendingConnection, _hubConnection) ||
-                pendingConnection.State == HubConnectionState.Connected)
+                !ReferenceEquals(pendingConnection, _hubConnection))
             {
+                _isRebuilding = false;
+                return;
+            }
+
+            if (pendingConnection.State == HubConnectionState.Connected)
+            {
+                if (_outboundQueue.Count > 0)
+                {
+                    _logger.LogInformation(
+                        "Replacement relay connection is connected but queued messages remain; scheduling flush");
+                    _rebuildTask = Task.Run(() => DrainQueueAndClearRebuildGate(pendingConnection));
+                    return;
+                }
                 _isRebuilding = false;
                 return;
             }
