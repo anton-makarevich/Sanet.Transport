@@ -422,9 +422,30 @@ public class RelayClientPublisher : ITransportPublisher
         // drain these themselves; ReadAllAsync/WaitToReadAsync under a canceled token do not.
         while (_commands.Reader.TryRead(out var command))
         {
-            if (command is LifecycleCommand.Start start)
+            switch (command)
             {
-                start.Completion.TrySetException(new ObjectDisposedException(nameof(RelayClientPublisher)));
+                case LifecycleCommand.Start start:
+                    start.Completion.TrySetException(new ObjectDisposedException(nameof(RelayClientPublisher)));
+                    break;
+                case LifecycleCommand.RebuildCompleted { NewConnection: { } unprocessed }:
+                    // The rebuild result never reached the actor; stop and dispose its
+                    // replacement connection so nothing is left live against the relay peer.
+                    DetachHandlers(unprocessed);
+                    try
+                    {
+                        if (unprocessed.State != HubConnectionState.Disconnected)
+                        {
+                            await unprocessed.StopAsync();
+                        }
+
+                        await unprocessed.DisposeAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Error disposing an unprocessed rebuilt connection during disposal");
+                    }
+
+                    break;
             }
         }
 
@@ -842,6 +863,19 @@ public class RelayClientPublisher : ITransportPublisher
                     currentHeld.Completion.TrySetResult(null);
                     held = null;
                     heldSendFailures = 0;
+                }
+                catch (Exception ex) when (_isDisposed && ex is not OperationCanceledException)
+                {
+                    // Disposal interrupted a send with a non-cancellation failure
+                    // (e.g. a close-frame HubException): fault the held message and exit.
+                    _logger.LogDebug(ex, "Outbound send failed during disposal");
+                    FaultDisposed(held);
+                    while (_outbound.Reader.TryRead(out var pending))
+                    {
+                        FaultDisposed(pending);
+                    }
+
+                    return;
                 }
                 catch (Exception ex) when (!_isDisposed)
                 {
