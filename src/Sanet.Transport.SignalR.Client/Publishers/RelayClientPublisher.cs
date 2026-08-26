@@ -574,10 +574,11 @@ public class RelayClientPublisher : ITransportPublisher
                             if (cmd.NewConnection is { } rebuilt)
                             {
                                 var superseded = current;
+                                var newConnection = rebuilt;
                                 DetachHandlers(superseded);
-                                current = rebuilt;
-                                PublishSnapshot(rebuilt, sendEnabled: true);
-                                RaiseEvent(() => Reconnected?.Invoke(rebuilt.ConnectionId));
+                                current = newConnection;
+                                PublishSnapshot(newConnection, sendEnabled: true);
+                                RaiseEvent(() => Reconnected?.Invoke(newConnection.ConnectionId));
                                 _ = DisposeSupersededConnectionAsync(superseded);
                             }
                             else
