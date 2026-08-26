@@ -9,26 +9,48 @@ namespace Sanet.Transport.SignalR.Client.Publishers;
 
 /// <summary>
 /// Relay-specific implementation of <see cref="ITransportPublisher"/> using SignalR.
+/// <para>
 /// Connects outbound to a cloud RelayHub using WebSockets and short-lived relay-ticket
-/// authentication. The relay ticket is bound into the connection URL at construction
-/// time. When <paramref name="relayTicketExpiresAt"/> is supplied, automatic reconnect is
-/// configured with a retry window that ends before the ticket expires, so repeatable
-/// unexpired tickets are reused after transient transport failures.
-/// When <paramref name="ticketRefresh"/> is supplied, a closed connection is not terminal:
-/// the delegate is invoked to obtain a fresh relay ticket, the underlying
-/// <see cref="HubConnection"/> is rebuilt around it (preserving subscribers and public
-/// events) and restarted. The public <see cref="Closed"/> event then only fires when no
-/// refresh delegate is configured, the delegate fails or returns null, or the bounded
-/// restart attempts are exhausted. After a successful manual rebuild the public
-/// <see cref="Reconnected"/> event is raised explicitly.
-/// Subscriber callbacks and public events are dispatched via the <see cref="SynchronizationContext"/>
-/// active at construction time, if any. Consumers on UI frameworks (Avalonia, WPF, WinUI) should
-/// construct this publisher on the UI thread to receive callbacks without manual marshaling.
+/// authentication. The relay ticket is bound into the connection URL at construction time.
+/// When <paramref name="relayTicketExpiresAt"/> is supplied, automatic reconnect is configured
+/// with a retry window that ends before the ticket expires, so repeatable unexpired tickets are
+/// reused after transient transport failures. When <paramref name="ticketRefresh"/> is supplied,
+/// a closed connection is not terminal: the delegate is invoked to obtain a fresh relay ticket,
+/// the underlying <see cref="HubConnection"/> is rebuilt around it (preserving subscribers and
+/// public events) and restarted.
+/// </para>
+/// <para>
+/// Concurrency model: a single lifecycle actor owns connection identity and recovery, and a
+/// single outbound pump is the only code that ever sends messages. Every message published via
+/// <see cref="PublishMessage"/> enters one bounded pipeline; while the connection is recovering,
+/// the pump pauses and messages accumulate (bounded by <paramref name="outboundQueueCapacity"/>),
+/// resuming in FIFO order once connectivity returns — there is no separate "queued vs direct"
+/// send path. The task returned by <see cref="PublishMessage"/> completes when the message has
+/// actually been sent (or definitively failed), so awaiting callers get truthful backpressure
+/// across recovery windows.
+/// </para>
+/// <para>
+/// The public <see cref="Closed"/> event fires only when no recovery path exists (neither a
+/// ticket-expiry reconnect window nor a refresh delegate), when the refresh delegate fails or
+/// returns null, or when the bounded restart attempts are exhausted. Once closed, callers must
+/// obtain a fresh relay ticket and recreate this publisher.
+/// </para>
+/// <para>
+/// Subscriber callbacks and public events are dispatched asynchronously off the raising thread,
+/// via the <see cref="SynchronizationContext"/> active at construction time if any. Consumers on
+/// UI frameworks (Avalonia, WPF, WinUI) should construct this publisher on the UI thread to
+/// receive callbacks without manual marshaling. Event handlers may safely call
+/// <see cref="PublishMessage"/> reentrantly; reentrant <see cref="StartAsync"/> calls from event
+/// handlers are not supported (the documented contract after <see cref="Closed"/> is to recreate
+/// the publisher).
+/// </para>
 /// </summary>
 public class RelayClientPublisher : ITransportPublisher
 {
     private const int MaxRestartAttempts = 3;
     private const int DefaultOutboundQueueCapacity = 500;
+    private static readonly TimeSpan SendRetryDelay = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan RestartRetryDelay = TimeSpan.FromMilliseconds(250);
 
     private readonly string _hubUrl;
     private readonly string _roomCode;
@@ -36,47 +58,83 @@ public class RelayClientPublisher : ITransportPublisher
     private readonly SynchronizationContext? _syncContext;
     private readonly List<Action<TransportMessage>> _subscribers = [];
     private readonly Func<CancellationToken, Task<RelayTicketRefresh?>>? _ticketRefresh;
-    private readonly OutboundMessageQueue _outboundQueue;
-    // Single-flight gate around outbound flushes: the automatic-reconnect path
-    // (OnReconnected) and the ticket-refresh rebuild path can otherwise run
-    // concurrent flushes that dequeue out of order and break FIFO delivery.
-    private readonly SemaphoreSlim _flushGate = new(1, 1);
-    private readonly Lock _connectionLock = new();
-    private readonly CancellationTokenSource _rebuildCts = new();
+    private readonly bool _hasRecoveryPath;
+    private readonly CancellationTokenSource _lifetimeCts = new();
 
-    // Coalesces overlapping close notifications: the bounded channel retains at most one
-    // pending rebuild request and drops duplicates while one is already queued. This
-    // replaces the former hand-rolled _isRebuilding/_pendingCloseConnection bookkeeping.
-    private readonly Channel<byte> _rebuildSignal = Channel.CreateBounded<byte>(
+    // Lifecycle commands: the single mailbox of the lifecycle actor. Every external entry point
+    // (StartAsync) and every SignalR connection callback posts here instead of touching state.
+    private readonly Channel<LifecycleCommand> _commands = Channel.CreateUnbounded<LifecycleCommand>();
+
+    // Unified outbound pipeline: every published message enters this bounded channel and the
+    // pump is the only sender. Capacity IS the QueueFull backpressure point.
+    private readonly Channel<PendingSend> _outbound;
+    private readonly int _outboundCapacity;
+
+    // Coalescing resume signal for the pump (at most one pending wake; redundant writes drop).
+    // Three wake conditions: enable (send backlog), terminal close (fault backlog), disposal.
+    private readonly Channel<byte> _resumeSignal = Channel.CreateBounded<byte>(
         new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
 
-    // Coalesces overlapping post-reconnect drain requests the same way: at most one
-    // follow-up drain pass is retained, so back-to-back reconnects can never spawn
-    // concurrent retry tasks that overwrite each other's bookkeeping.
-    private readonly Channel<byte> _drainSignal = Channel.CreateBounded<byte>(
-        new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
-    private readonly Task _drainLoopTask;
-    private HubConnection _hubConnection;
+    // Published by the lifecycle actor only; readable from any thread without a lock.
+    private volatile ConnectionSnapshot _snapshot = null!;
+
+    private readonly Task _lifecycleTask;
+    private readonly Task _pumpTask;
     private long _sequenceNumber;
     private volatile bool _isDisposed;
-
-    // Set while a recovery transition (automatic reconnect drain or ticket-refresh
-    // rebuild) is in progress, so PublishMessage queues instead of sending directly.
-    // All accesses happen under _connectionLock.
-    private bool _isTransitioning;
-    private readonly Task? _rebuildLoopTask;
     private int _terminalClosedRaised;
+    private long _transitionSequence;
+
+    // Closed-handler bookkeeping per connection instance. Mostly actor-owned, but the
+    // rebuild background task attaches/detaches too, so dictionary access stays guarded.
+    private readonly Lock _closedHandlersGate = new();
     private readonly Dictionary<HubConnection, Func<Exception?, Task>> _closedHandlers = new();
 
     // Preserves FIFO delivery when a SynchronizationContext is captured. Contexts
     // such as xUnit's AsyncTestSyncContext delegate Post to the thread pool, which
     // gives no execution-order guarantee; queueing notifications and draining them
     // with a single in-flight post keeps messages ordered for subscribers. The queue
-    // is intentionally unbounded (unlike _outboundQueue): dropping notifications would
+    // is intentionally unbounded (unlike _outbound): dropping notifications would
     // silently violate delivery, and inbound match traffic is low-volume.
     private readonly Lock _dispatchLock = new();
     private readonly Queue<(TransportMessage Message, Action<TransportMessage>[] Subscribers)> _pendingNotifications = new();
     private bool _dispatchPending;
+
+    /// <summary>
+    /// Immutable view of the connection, published by the lifecycle actor on every transition.
+    /// <see cref="SendEnabled"/> gates the outbound pump; <see cref="HasRecoveryPath"/> distinguishes
+    /// a temporary pause (messages queue) from a non-recoverable disconnect (publishes reject with
+    /// <see cref="PublishFailureReason.NotConnected"/>); <see cref="TerminallyClosed"/> makes the
+    /// pump fault everything pending instead of holding it forever.
+    /// </summary>
+    private sealed record ConnectionSnapshot(
+        HubConnection Connection,
+        bool SendEnabled,
+        bool HasRecoveryPath,
+        bool TerminallyClosed);
+
+    private sealed record PendingSend(TransportMessage Message, TaskCompletionSource<object?> Completion);
+
+    private abstract record LifecycleCommand
+    {
+        private LifecycleCommand() { }
+
+        public sealed record Start(TaskCompletionSource<object?> Completion) : LifecycleCommand;
+
+        public sealed record StartCompleted(TaskCompletionSource<object?> Completion, Exception? Error)
+            : LifecycleCommand;
+
+        // Sequence stamped at post time: SignalR may raise the Reconnecting and Reconnected
+        // callbacks concurrently, so the actor applies whichever transition was announced
+        // LAST and drops stale ones that arrive out of order.
+        public sealed record HubReconnecting(long Sequence, Exception? Error) : LifecycleCommand;
+
+        public sealed record HubReconnected(long Sequence, string? ConnectionId) : LifecycleCommand;
+
+        public sealed record HubClosed(HubConnection Connection, Exception? Error) : LifecycleCommand;
+
+        public sealed record RebuildCompleted(HubConnection? NewConnection, Exception? Error) : LifecycleCommand;
+    }
 
     /// <summary>
     /// Event raised when a peer connects to the room.
@@ -105,28 +163,29 @@ public class RelayClientPublisher : ITransportPublisher
 
     /// <summary>
     /// Event raised when the connection has been reestablished, either by automatic
-    /// reconnect within a ticket window or by a successful manual rebuild with a
-    /// freshly issued relay ticket.
+    /// reconnect within a ticket window or by a successful rebuild with a freshly
+    /// issued relay ticket.
     /// </summary>
     public event Action<string?>? Reconnected;
 
     /// <summary>
     /// Event raised when the connection has been closed terminally. This fires when no
-    /// ticket-refresh delegate is configured, when the delegate fails or returns null,
-    /// when the bounded restart attempts are exhausted, or when the publisher is disposed.
-    /// Once closed, callers must obtain a fresh relay ticket and recreate this publisher.
+    /// recovery path exists (no ticket expiry window and no refresh delegate), when the
+    /// refresh delegate fails or returns null, when the bounded restart attempts are
+    /// exhausted, or when the publisher is disposed. Once closed, callers must obtain a
+    /// fresh relay ticket and recreate this publisher.
     /// </summary>
     public event Action<Exception?>? Closed;
 
     /// <summary>
     /// Gets the current state of the underlying SignalR connection.
     /// </summary>
-    public HubConnectionState State => CurrentConnection.State;
+    public HubConnectionState State => _snapshot.Connection.State;
 
     /// <summary>
     /// Gets whether the publisher is currently connected to the hub.
     /// </summary>
-    public bool IsConnected => CurrentConnection.State == HubConnectionState.Connected;
+    public bool IsConnected => _snapshot.Connection.State == HubConnectionState.Connected;
 
     /// <summary>
     /// Creates a new instance of <see cref="RelayClientPublisher"/>.
@@ -147,9 +206,9 @@ public class RelayClientPublisher : ITransportPublisher
     /// canceled when the publisher is disposed.
     /// </param>
     /// <param name="outboundQueueCapacity">
-    /// The maximum number of messages queued while reconnecting or rebuilding. When full,
-    /// <see cref="PublishMessage"/> throws <see cref="TransportPublishException"/> with
-    /// <see cref="PublishFailureReason.QueueFull"/>.
+    /// The maximum number of messages held in the outbound pipeline while the connection is
+    /// recovering. When full, <see cref="PublishMessage"/> throws
+    /// <see cref="TransportPublishException"/> with <see cref="PublishFailureReason.QueueFull"/>.
     /// </param>
     public RelayClientPublisher(
         string hubUrl,
@@ -178,25 +237,31 @@ public class RelayClientPublisher : ITransportPublisher
             throw new ArgumentException("Relay ticket cannot be null or empty", nameof(relayTicket));
         }
 
+        if (outboundQueueCapacity <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(outboundQueueCapacity),
+                "Outbound queue capacity must be greater than zero.");
+        }
+
         _hubUrl = hubUrl;
         _roomCode = roomCode;
         _ticketRefresh = ticketRefresh;
+        _hasRecoveryPath = ticketRefresh is not null || relayTicketExpiresAt.HasValue;
+        _outboundCapacity = outboundQueueCapacity;
 
-        _outboundQueue = new OutboundMessageQueue(outboundQueueCapacity);
+        var connection = BuildConnection(hubUrl, relayTicket, relayTicketExpiresAt);
+        AttachHandlers(connection);
 
-        _hubConnection = BuildConnection(hubUrl, relayTicket, relayTicketExpiresAt);
-        AttachHandlers(_hubConnection);
+        // Pump starts parked: nothing may be sent before StartAsync succeeds.
+        _snapshot = new ConnectionSnapshot(connection, SendEnabled: false, _hasRecoveryPath, TerminallyClosed: false);
+        _outbound = Channel.CreateBounded<PendingSend>(
+            new BoundedChannelOptions(outboundQueueCapacity) { SingleReader = true, SingleWriter = false });
 
-        // The loop runs for the publisher's lifetime; disposal completes the channel
-        // and awaits this task before tearing the connection down.
-        _drainLoopTask = Task.Run(DrainLoopAsync);
-
-        if (_ticketRefresh is not null)
-        {
-            // The loop runs for the publisher's lifetime; disposal completes the channel
-            // and awaits this task before tearing the connection down.
-            _rebuildLoopTask = Task.Run(RebuildLoopAsync);
-        }
+        // Both loops run for the publisher's lifetime; disposal cancels the token, completes
+        // the channels, awaits both tasks and faults anything still pending.
+        _pumpTask = Task.Run(RunOutboundPumpAsync);
+        _lifecycleTask = Task.Run(RunLifecycleLoopAsync);
     }
 
     /// <summary>
@@ -229,7 +294,9 @@ public class RelayClientPublisher : ITransportPublisher
     }
 
     /// <summary>
-    /// Starts the connection to the SignalR relay hub.
+    /// Starts the connection to the SignalR relay hub. The start runs outside the lifecycle
+    /// loop (so it can never block recovery processing) and its outcome is applied by the loop.
+    /// A second start while one is in progress throws <see cref="InvalidOperationException"/>.
     /// </summary>
     public async Task StartAsync()
     {
@@ -238,21 +305,21 @@ public class RelayClientPublisher : ITransportPublisher
             throw new ObjectDisposedException(nameof(RelayClientPublisher));
         }
 
-        var connection = CurrentConnection;
-        if (connection.State == HubConnectionState.Disconnected)
-        {
-            await connection.StartAsync();
-        }
+        var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await _commands.Writer.WriteAsync(new LifecycleCommand.Start(completion));
+        await completion.Task;
     }
 
     /// <summary>
-    /// Publishes a transport message to the relay hub. While reconnecting or rebuilding
-    /// the connection, the message is queued (bounded by <paramref name="outboundQueueCapacity"/>
-    /// of the constructor) and flushed in order once the connection is reestablished;
-    /// when the queue is full a <see cref="TransportPublishException"/> with
-    /// <see cref="PublishFailureReason.QueueFull"/> is thrown. When disconnected with no
-    /// rebuild in progress, a <see cref="TransportPublishException"/> with
-    /// <see cref="PublishFailureReason.NotConnected"/> is thrown.
+    /// Publishes a transport message to the relay hub. Every message takes the same unified
+    /// pipeline: while the connection is connected the message is sent immediately; while the
+    /// connection is recovering (automatic reconnect or ticket-refresh rebuild) it is held in
+    /// the bounded pipeline (capacity <paramref name="outboundQueueCapacity"/>) and delivered
+    /// in order once connectivity returns. The returned task completes when the message has
+    /// been sent, or throws:
+    /// <see cref="TransportPublishException"/> with <see cref="PublishFailureReason.QueueFull"/>
+    /// when the pipeline is full, or with <see cref="PublishFailureReason.NotConnected"/> when
+    /// the publisher is disconnected with no recovery path configured or after a terminal close.
     /// </summary>
     /// <param name="message">The transport message to publish.</param>
     public async Task PublishMessage(TransportMessage message)
@@ -262,123 +329,24 @@ public class RelayClientPublisher : ITransportPublisher
             throw new ObjectDisposedException(nameof(RelayClientPublisher));
         }
 
-        HubConnection? sendTarget;
-        lock (_connectionLock)
+        var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_outbound.Writer.TryWrite(new PendingSend(message, completion)))
         {
-            if (_isTransitioning || _hubConnection.State == HubConnectionState.Reconnecting)
-            {
-                _outboundQueue.EnqueueOrThrow(message, _logger);
-                return;
-            }
-
-            sendTarget = _hubConnection.State == HubConnectionState.Connected
-                ? _hubConnection
-                : null;
+            _logger.LogWarning(
+                "Message rejected: outbound pipeline is full ({Capacity} messages)",
+                _outboundCapacity);
+            throw new TransportPublishException(
+                PublishFailureReason.QueueFull,
+                $"Outbound pipeline is full ({_outboundCapacity} messages).");
         }
 
-        if (sendTarget is not null)
-        {
-            await SendEnvelopeAsync(sendTarget, message);
-            return;
-        }
-
-        _logger.LogWarning("Message rejected: relay client is not connected");
-        throw new TransportPublishException(
-            PublishFailureReason.NotConnected,
-            "Relay client is not connected.");
-    }
-
-    private async Task SendEnvelopeAsync(HubConnection connection, TransportMessage message)
-    {
-        var serializedPayload = JsonSerializer.Serialize(message);
-        var envelope = new RelayEnvelope(
-            SenderId: connection.ConnectionId ?? string.Empty,
-            Payload: serializedPayload,
-            SchemaVersion: "1.0.0",
-            SequenceNumber: Interlocked.Increment(ref _sequenceNumber),
-            Timestamp: DateTime.UtcNow);
-
-        await connection.InvokeAsync("Relay", _roomCode, envelope);
-    }
-
-    /// <summary>
-    /// Drains the outbound queue, sending each drained message outside the lock so
-    /// concurrent publishes cannot interleave; mid-flush publishes are appended to the
-    /// back of the queue and picked up by this loop.
-    /// </summary>
-    private async Task FlushOutboundQueueAsync(HubConnection connection)
-    {
-        await _flushGate.WaitAsync();
-        try
-        {
-            await FlushOutboundQueueCoreAsync(connection);
-        }
-        finally
-        {
-            _flushGate.Release();
-        }
-    }
-
-    private async Task FlushOutboundQueueCoreAsync(HubConnection connection)
-    {
-        while (!_isDisposed)
-        {
-            var message = _outboundQueue.TryDequeue();
-
-            if (message is null)
-            {
-                return;
-            }
-
-            try
-            {
-                await SendEnvelopeAsync(connection, message);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(
-                    ex,
-                    "Failed to flush queued message; requeueing it for the next drain attempt");
-                _outboundQueue.RequeueAhead(message);
-                return;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Shared drain routine used by both recovery paths (automatic reconnect and
-    /// ticket-refresh rebuild). Retries with backoff while queued messages remain and
-    /// the connection is still connected; returns once the queue is empty, the
-    /// publisher is disposed or the connection dropped (a subsequent close notification
-    /// will trigger the next recovery pass).
-    /// </summary>
-    private async Task DrainOutboundQueueAsync(HubConnection connection)
-    {
-        var attempt = 0;
-        while (!_isDisposed)
-        {
-            await FlushOutboundQueueAsync(connection);
-
-            lock (_connectionLock)
-            {
-                if (_outboundQueue.Count == 0 || _isDisposed ||
-                    connection.State != HubConnectionState.Connected)
-                {
-                    return;
-                }
-            }
-
-            // The transition gate stays set while queued messages remain so
-            // PublishMessage keeps appending to the queue instead of sending directly
-            // and overtaking it.
-            await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(100 * ++attempt, 1000)));
-        }
+        await completion.Task;
     }
 
     /// <summary>
     /// Subscribes to receive transport messages from the relay.
     /// </summary>
-    /// <param name="onMessageReceived">Action called when a message is received.</param>
+    /// <param name="onMessageReceived">Action called when a transport message is received.</param>
     public void Subscribe(Action<TransportMessage> onMessageReceived)
     {
         if (_isDisposed)
@@ -394,16 +362,502 @@ public class RelayClientPublisher : ITransportPublisher
         }
     }
 
-    private HubConnection CurrentConnection
+    /// <summary>
+    /// Asynchronously disposes the publisher and closes the hub connection. Cancels any
+    /// in-flight start or rebuild, awaits both internal loops and faults all still-pending
+    /// publishes and starts so no caller is left waiting.
+    /// </summary>
+    public async ValueTask DisposeAsync()
     {
-        get
+        if (_isDisposed)
         {
-            lock (_connectionLock)
+            return;
+        }
+
+        _isDisposed = true;
+        await _lifetimeCts.CancelAsync();
+        _commands.Writer.TryComplete();
+        _outbound.Writer.TryComplete();
+        _resumeSignal.Writer.TryComplete();
+
+        foreach (var loopTask in new[] { _lifecycleTask, _pumpTask })
+        {
+            try
             {
-                return _hubConnection;
+                await loopTask;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Internal loop ended with an error during disposal");
+            }
+        }
+
+        // Belt and braces: fault anything still buffered in either channel. The loops normally
+        // drain these themselves; ReadAllAsync/WaitToReadAsync under a canceled token do not.
+        while (_commands.Reader.TryRead(out var command))
+        {
+            if (command is LifecycleCommand.Start start)
+            {
+                start.Completion.TrySetException(new ObjectDisposedException(nameof(RelayClientPublisher)));
+            }
+        }
+
+        while (_outbound.Reader.TryRead(out var pending))
+        {
+            pending.Completion.TrySetException(new ObjectDisposedException(nameof(RelayClientPublisher)));
+        }
+
+        var connection = _snapshot.Connection;
+        DetachHandlers(connection);
+
+        if (connection.State != HubConnectionState.Disconnected)
+        {
+            await connection.StopAsync();
+        }
+
+        await connection.DisposeAsync();
+        _lifetimeCts.Dispose();
+
+        RaiseTerminalClosed(null);
+
+        GC.SuppressFinalize(this);
+    }
+
+    // ------------------------------------------------------------------
+    // Lifecycle actor
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Single-consumer lifecycle loop: the sole owner of connection identity, recovery and the
+    /// published snapshot. SignalR callbacks and StartAsync post commands here; no handler of
+    /// this switch performs an inline long-running operation (starts and rebuilds run as
+    /// tracked background tasks posting their results back as commands), so the mailbox stays
+    /// responsive and no command can starve another.
+    /// </summary>
+    private async Task RunLifecycleLoopAsync()
+    {
+        var current = _snapshot.Connection;
+        Task? activeStart = null;
+        Task? activeRebuild = null;
+        var lastTransitionSequence = 0L;
+
+        try
+        {
+            await foreach (var command in _commands.Reader.ReadAllAsync(_lifetimeCts.Token))
+            {
+                try
+                {
+                    switch (command)
+                    {
+                        case LifecycleCommand.Start cmd:
+                            if (activeStart is not null)
+                            {
+                                cmd.Completion.TrySetException(new InvalidOperationException(
+                                    "A start operation is already in progress."));
+                                break;
+                            }
+
+                            if (_snapshot.TerminallyClosed)
+                            {
+                                cmd.Completion.TrySetException(new TransportPublishException(
+                                    PublishFailureReason.NotConnected,
+                                    "Relay client was closed terminally; recreate the publisher with a fresh ticket."));
+                                break;
+                            }
+
+                            if (current.State != HubConnectionState.Disconnected)
+                            {
+                                cmd.Completion.TrySetResult(null);
+                                break;
+                            }
+
+                            activeStart = RunStartAsync(current, cmd.Completion);
+                            break;
+
+                        case LifecycleCommand.StartCompleted cmd:
+                            activeStart = null;
+                            if (cmd.Error is not null)
+                            {
+                                PublishSnapshot(current, sendEnabled: false);
+                                cmd.Completion.TrySetException(cmd.Error);
+                            }
+                            else
+                            {
+                                PublishSnapshot(current, sendEnabled: true);
+                                cmd.Completion.TrySetResult(null);
+                            }
+
+                            break;
+
+                        case LifecycleCommand.HubReconnecting cmd:
+                            if (cmd.Sequence <= lastTransitionSequence)
+                            {
+                                break;
+                            }
+
+                            lastTransitionSequence = cmd.Sequence;
+                            // SignalR occasionally delivers this callback late — after the
+                            // reconnect already completed. Pausing the pipeline against an
+                            // observably-connected hub would stall it forever (no further
+                            // Reconnected will come), so only pause when the state agrees.
+                            if (current.State != HubConnectionState.Connected)
+                            {
+                                PublishSnapshot(current, sendEnabled: false);
+                            }
+
+                            RaiseEvent(() => Reconnecting?.Invoke(cmd.Error));
+                            break;
+
+                        case LifecycleCommand.HubReconnected cmd:
+                            if (cmd.Sequence <= lastTransitionSequence)
+                            {
+                                break;
+                            }
+
+                            lastTransitionSequence = cmd.Sequence;
+                            PublishSnapshot(current, sendEnabled: true);
+                            RaiseEvent(() => Reconnected?.Invoke(cmd.ConnectionId));
+                            break;
+
+                        case LifecycleCommand.HubClosed cmd:
+                            if (!ReferenceEquals(cmd.Connection, current) || _snapshot.TerminallyClosed)
+                            {
+                                break; // stale notification or already terminal
+                            }
+
+                            if (_ticketRefresh is null)
+                            {
+                                PublishSnapshot(current, sendEnabled: false, terminallyClosed: true);
+                                RaiseTerminalClosed(cmd.Error);
+                                break;
+                            }
+
+                            if (activeRebuild is not null)
+                            {
+                                break; // coalesce overlapping close notifications
+                            }
+
+                            PublishSnapshot(current, sendEnabled: false);
+                            activeRebuild = RunRebuildAsync();
+                            break;
+
+                        case LifecycleCommand.RebuildCompleted cmd:
+                            activeRebuild = null;
+                            if (cmd.NewConnection is { } rebuilt)
+                            {
+                                var superseded = current;
+                                DetachHandlers(superseded);
+                                current = rebuilt;
+                                PublishSnapshot(rebuilt, sendEnabled: true);
+                                RaiseEvent(() => Reconnected?.Invoke(rebuilt.ConnectionId));
+                                _ = DisposeSupersededConnectionAsync(superseded);
+                            }
+                            else
+                            {
+                                PublishSnapshot(current, sendEnabled: false, terminallyClosed: true);
+                                RaiseTerminalClosed(cmd.Error);
+                            }
+
+                            break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Never let one bad iteration kill the actor.
+                    _logger.LogError(ex, "Unexpected error processing a lifecycle command");
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal shutdown: disposal cancels the lifetime token.
+        }
+    }
+
+    private void PublishSnapshot(HubConnection connection, bool sendEnabled, bool terminallyClosed = false)
+    {
+        _snapshot = new ConnectionSnapshot(connection, sendEnabled, _hasRecoveryPath, terminallyClosed);
+        // Signal on every transition, not only enables: a parked pump must also wake for
+        // terminal close (to fault its backlog) even though sending stays disabled.
+        SignalPump();
+    }
+
+    private void SignalPump() => _resumeSignal.Writer.TryWrite(0);
+
+    private async Task RunStartAsync(HubConnection connection, TaskCompletionSource<object?> completion)
+    {
+        Exception? error = null;
+        try
+        {
+            await connection.StartAsync(_lifetimeCts.Token);
+        }
+        catch (OperationCanceledException) when (_isDisposed)
+        {
+            // Disposal owns faulting this completion via the shutdown drain.
+            completion.TrySetException(new ObjectDisposedException(nameof(RelayClientPublisher)));
+            return;
+        }
+        catch (Exception ex)
+        {
+            error = ex;
+        }
+
+        _commands.Writer.TryWrite(new LifecycleCommand.StartCompleted(completion, error));
+    }
+
+    /// <summary>
+    /// Background rebuild body: pure I/O with no shared-state mutation — obtains a fresh ticket,
+    /// builds and starts a replacement connection, then posts the result back to the lifecycle
+    /// actor, which alone swaps the published snapshot. Terminal failure (refresh failed/null,
+    /// or bounded start attempts exhausted) is reported via <see cref="LifecycleCommand.RebuildCompleted"/>.
+    /// </summary>
+    private async Task RunRebuildAsync()
+    {
+        RelayTicketRefresh? refresh = null;
+        Exception? error = null;
+
+        try
+        {
+            refresh = await _ticketRefresh!(_lifetimeCts.Token);
+        }
+        catch (OperationCanceledException) when (_isDisposed)
+        {
+            return; // disposal unwinds everything; nothing owed to anyone
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Relay ticket refresh failed; closing the connection terminally");
+            error = ex;
+        }
+
+        HubConnection? newConnection = null;
+        if (error is null && refresh is null)
+        {
+            _logger.LogWarning("Relay ticket refresh returned no ticket; closing the connection terminally");
+        }
+        else if (error is null)
+        {
+            newConnection = BuildConnection(_hubUrl, refresh!.RelayTicket, refresh.ExpiresAt);
+            AttachHandlers(newConnection);
+
+            Exception? lastStartFailure = null;
+            for (var attempt = 1; attempt <= MaxRestartAttempts && !_isDisposed; attempt++)
+            {
+                try
+                {
+                    await newConnection.StartAsync(_lifetimeCts.Token);
+                    lastStartFailure = null;
+                    break;
+                }
+                catch (OperationCanceledException) when (_isDisposed)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    lastStartFailure = ex;
+                    _logger.LogWarning(
+                        ex,
+                        "Failed to restart relay connection with fresh ticket (attempt {Attempt}/{MaxAttempts})",
+                        attempt,
+                        MaxRestartAttempts);
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromMilliseconds(RestartRetryDelay.Milliseconds * attempt),
+                            _lifetimeCts.Token);
+                    }
+                    catch (OperationCanceledException) when (_isDisposed)
+                    {
+                        return;
+                    }
+                }
+            }
+
+            if (!_isDisposed && lastStartFailure is null)
+            {
+                _commands.Writer.TryWrite(new LifecycleCommand.RebuildCompleted(newConnection, null));
+                return;
+            }
+
+            if (lastStartFailure is not null)
+            {
+                _logger.LogError(
+                    "Giving up restarting relay connection after {MaxAttempts} attempts",
+                    MaxRestartAttempts);
+                error = lastStartFailure;
+            }
+
+            // The replacement connection never went live; dispose it quietly.
+            if (newConnection is not null)
+            {
+                DetachHandlers(newConnection);
+                _ = DisposeSupersededConnectionAsync(newConnection);
+            }
+
+            newConnection = null;
+        }
+
+        if (_isDisposed)
+        {
+            return;
+        }
+
+        _commands.Writer.TryWrite(new LifecycleCommand.RebuildCompleted(null, error));
+    }
+
+    private async Task DisposeSupersededConnectionAsync(HubConnection connection)
+    {
+        try
+        {
+            await connection.DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Error disposing superseded relay connection");
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Outbound pump
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Single-consumer outbound pump: the only code that ever sends envelopes. Holds at most one
+    /// locally ("held slot") so a failed or paused send keeps its place ahead of everything
+    /// still in the channel — FIFO is preserved by construction. Parks when sending is disabled,
+    /// wakes on enable / terminal close / disposal, and faults the backlog with NotConnected on
+    /// terminal close or when no recovery path exists.
+    /// </summary>
+    private async Task RunOutboundPumpAsync()
+    {
+        PendingSend? held = null;
+        try
+        {
+            while (true)
+            {
+                var snapshot = _snapshot;
+
+                if (snapshot.TerminallyClosed)
+                {
+                    FaultNotConnected(held);
+                    held = null;
+                    while (_outbound.Reader.TryRead(out var pending))
+                    {
+                        FaultNotConnected(pending);
+                    }
+
+                    // Keep rejecting anything that arrives later; exit when the channel drains
+                    // during disposal.
+                    if (!await _outbound.Reader.WaitToReadAsync(_lifetimeCts.Token))
+                    {
+                        return;
+                    }
+
+                    continue;
+                }
+
+                if (!snapshot.SendEnabled || snapshot.Connection.State != HubConnectionState.Connected)
+                {
+                    if (!snapshot.HasRecoveryPath)
+                    {
+                        // No reconnect window and no refresh delegate: a disconnect is permanent.
+                        // Preserve the legacy immediate-rejection contract.
+                        FaultNotConnected(held);
+                        held = null;
+                        while (_outbound.Reader.TryRead(out var pending))
+                        {
+                            FaultNotConnected(pending);
+                        }
+
+                        if (!await _outbound.Reader.WaitToReadAsync(_lifetimeCts.Token))
+                        {
+                            return; // disposal completed the outbound channel
+                        }
+
+                        continue;
+                    }
+
+                    if (!await _resumeSignal.Reader.WaitToReadAsync(_lifetimeCts.Token))
+                    {
+                        return; // disposal completed the signal channel
+                    }
+
+                    _resumeSignal.Reader.TryRead(out _);
+                    continue;
+                }
+
+                if (held is null)
+                {
+                    if (!_outbound.Reader.TryRead(out var next))
+                    {
+                        if (!await _outbound.Reader.WaitToReadAsync(_lifetimeCts.Token))
+                        {
+                            return; // disposal completed the outbound channel
+                        }
+
+                        continue;
+                    }
+
+                    held = next;
+                }
+
+                try
+                {
+                    await SendEnvelopeAsync(snapshot.Connection, held.Message);
+                    held.Completion.TrySetResult(null);
+                    held = null;
+                }
+                catch (Exception ex) when (!_isDisposed)
+                {
+                    _logger.LogError(ex, "Failed to send queued message; retrying");
+                    await Task.Delay(SendRetryDelay, _lifetimeCts.Token);
+                    // Loop back: the snapshot is re-read, so a connection drop parks the pump
+                    // with the held message intact, ahead of everything behind it.
+                }
+            }
+        }
+        catch (OperationCanceledException) when (_isDisposed)
+        {
+            FaultDisposed(held);
+            while (_outbound.Reader.TryRead(out var pending))
+            {
+                FaultDisposed(pending);
             }
         }
     }
+
+    private void FaultNotConnected(PendingSend? pending)
+    {
+        if (pending is null)
+        {
+            return;
+        }
+
+        _logger.LogWarning("Message rejected: relay client is not connected");
+        pending.Completion.TrySetException(new TransportPublishException(
+            PublishFailureReason.NotConnected,
+            "Relay client is not connected."));
+    }
+
+    private void FaultDisposed(PendingSend? pending) =>
+        pending?.Completion.TrySetException(new ObjectDisposedException(nameof(RelayClientPublisher)));
+
+    private async Task SendEnvelopeAsync(HubConnection connection, TransportMessage message)
+    {
+        var serializedPayload = JsonSerializer.Serialize(message);
+        var envelope = new RelayEnvelope(
+            SenderId: connection.ConnectionId ?? string.Empty,
+            Payload: serializedPayload,
+            SchemaVersion: "1.0.0",
+            SequenceNumber: ++_sequenceNumber,
+            Timestamp: DateTime.UtcNow);
+
+        await connection.InvokeAsync("Relay", _roomCode, envelope);
+    }
+
+    // ------------------------------------------------------------------
+    // Connection wiring (called from the constructor and the lifecycle actor only)
+    // ------------------------------------------------------------------
 
     private HubConnection BuildConnection(string hubUrl, string relayTicket, DateTimeOffset? expiresAt)
     {
@@ -441,10 +895,11 @@ public class RelayClientPublisher : ITransportPublisher
         // The Closed handler must know which connection closed so notifications from
         // superseded connections can be identified; the delegate is kept to allow detaching.
         var closedHandler = new Func<Exception?, Task>(exception => OnClosed(connection, exception));
-        lock (_connectionLock)
+        lock (_closedHandlersGate)
         {
             _closedHandlers[connection] = closedHandler;
         }
+
         connection.Closed += closedHandler;
     }
 
@@ -453,17 +908,66 @@ public class RelayClientPublisher : ITransportPublisher
         connection.Reconnecting -= OnReconnecting;
         connection.Reconnected -= OnReconnected;
 
-        Func<Exception?, Task>? closedHandler;
-        lock (_connectionLock)
+        lock (_closedHandlersGate)
         {
-            _closedHandlers.Remove(connection, out closedHandler);
-        }
+            if (!_closedHandlers.Remove(connection, out var closedHandler))
+            {
+                return;
+            }
 
-        if (closedHandler is not null)
-        {
             connection.Closed -= closedHandler;
         }
     }
+
+    private Task OnReconnecting(Exception? exception)
+    {
+        _logger.LogInformation(exception, "Relay client reconnecting");
+        _commands.Writer.TryWrite(new LifecycleCommand.HubReconnecting(
+            Interlocked.Increment(ref _transitionSequence), exception));
+        return Task.CompletedTask;
+    }
+
+    private Task OnReconnected(string? connectionId)
+    {
+        _logger.LogInformation("Relay client reconnected with connection ID {ConnectionId}", connectionId);
+        _commands.Writer.TryWrite(new LifecycleCommand.HubReconnected(
+            Interlocked.Increment(ref _transitionSequence), connectionId));
+        return Task.CompletedTask;
+    }
+
+    private Task OnClosed(HubConnection connection, Exception? exception)
+    {
+        if (_isDisposed)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (exception is not null)
+        {
+            _logger.LogError(exception, "Relay client connection closed with error");
+        }
+        else
+        {
+            _logger.LogInformation("Relay client connection closed");
+        }_commands.Writer.TryWrite(new LifecycleCommand.HubClosed(connection, exception));
+        return Task.CompletedTask;
+    }
+
+    private void RaiseTerminalClosed(Exception? exception)
+    {
+        // Raise Closed at most once: disposal and a concurrent terminal rebuild
+        // failure must not produce duplicate notifications.
+        if (Interlocked.Exchange(ref _terminalClosedRaised, 1) != 0)
+        {
+            return;
+        }
+
+        RaiseEvent(() => Closed?.Invoke(exception));
+    }
+
+    // ------------------------------------------------------------------
+    // Inbound dispatch (untouched subscriber trampoline)
+    // ------------------------------------------------------------------
 
     private void HandleEnvelopeReceived(RelayEnvelope envelope)
     {
@@ -600,432 +1104,5 @@ public class RelayClientPublisher : ITransportPublisher
                 }
             }
         }
-    }
-
-    /// <summary>
-    /// Asynchronously disposes the publisher and closes the hub connection.
-    /// Any in-flight ticket-refresh rebuild is canceled and awaited before teardown.
-    /// </summary>
-    public async ValueTask DisposeAsync()
-    {
-        if (_isDisposed)
-        {
-            return;
-        }
-
-        _isDisposed = true;
-        _rebuildCts.Cancel();
-        _rebuildSignal.Writer.TryComplete();
-        _drainSignal.Writer.TryComplete();
-
-        Task? rebuildLoopTask;
-        lock (_connectionLock)
-        {
-            rebuildLoopTask = _rebuildLoopTask;
-        }
-
-        if (rebuildLoopTask is not null)
-        {
-            try
-            {
-                await rebuildLoopTask;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "In-flight relay rebuild loop ended with an error during disposal");
-            }
-        }
-
-        try
-        {
-            await _drainLoopTask;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "In-flight outbound queue drain loop ended with an error during disposal");
-        }
-
-        var connection = CurrentConnection;
-        DetachHandlers(connection);
-
-        if (connection.State != HubConnectionState.Disconnected)
-        {
-            await connection.StopAsync();
-        }
-
-        await connection.DisposeAsync();
-        _rebuildCts.Dispose();
-        _flushGate.Dispose();
-
-        RaiseTerminalClosed(null);
-
-        GC.SuppressFinalize(this);
-    }
-
-    private Task OnReconnecting(Exception? exception)
-    {
-        _logger.LogInformation(exception, "Relay client reconnecting");
-        RaiseEvent(() => Reconnecting?.Invoke(exception));
-        return Task.CompletedTask;
-    }
-
-    private async Task OnReconnected(string? connectionId)
-    {
-        _logger.LogInformation("Relay client reconnected with connection ID {ConnectionId}", connectionId);
-
-        var connection = CurrentConnection;
-
-        // Block PublishMessage from sending directly while the queue is being drained
-        // so messages published during the drain are appended in order.
-        lock (_connectionLock)
-        {
-            _isTransitioning = true;
-        }
-
-        try
-        {
-            // Raise the Reconnected event synchronously (not via RaiseEvent) so that
-            // handlers execute while _isTransitioning is still true.  This lets
-            // handlers publish messages that will be queued and drained below; using
-            // RaiseEvent would defer the handler via the SynchronizationContext,
-            // causing it to run after the drain completes on an empty queue.
-            Reconnected?.Invoke(connectionId);
-
-            // Messages published while the connection was automatically reconnecting were
-            // queued by PublishMessage; flush them now that the connection is restored.
-            await FlushOutboundQueueAsync(connection);
-        }
-        finally
-        {
-            bool shouldRetry;
-            lock (_connectionLock)
-            {
-                shouldRetry = _outboundQueue.Count > 0 &&
-                              !_isDisposed &&
-                              connection.State == HubConnectionState.Connected;
-                if (!shouldRetry)
-                {
-                    _isTransitioning = false;
-                }
-            }
-
-            if (shouldRetry)
-            {
-                // Coalesced request for exactly one follow-up drain pass. The drain loop
-                // owns the transition gate for that pass; overlapping reconnects can
-                // never orphan a background task by overwriting its reference.
-                _drainSignal.Writer.TryWrite(0);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Single-consumer drain loop. Each queued signal runs one
-    /// <see cref="DrainOutboundQueueAsync"/> pass against the current connection and
-    /// releases the transition gate afterwards; overlapping signals are coalesced by
-    /// the bounded channel (see <see cref="OnReconnected"/>). The loop must never
-    /// terminate on an unexpected fault: a throwing iteration is logged and the loop
-    /// keeps serving later signals.
-    /// </summary>
-    private async Task DrainLoopAsync()
-    {
-        try
-        {
-            await foreach (var _ in _drainSignal.Reader.ReadAllAsync(_rebuildCts.Token))
-            {
-                try
-                {
-                    HubConnection connection;
-                    lock (_connectionLock)
-                    {
-                        connection = _hubConnection;
-                    }
-
-                    if (_isDisposed || connection.State != HubConnectionState.Connected)
-                    {
-                        continue;
-                    }
-
-                    await DrainOutboundQueueAsync(connection);
-                }
-                catch (OperationCanceledException) when (_isDisposed)
-                {
-                    // Disposal canceled the in-flight pass.
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Unexpected error while draining the outbound queue");
-                }
-                finally
-                {
-                    lock (_connectionLock)
-                    {
-                        _isTransitioning = false;
-                    }
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Normal shutdown: the drain cancellation token fires during disposal.
-        }
-    }
-
-    private Task OnClosed(HubConnection connection, Exception? exception)
-    {
-        if (_isDisposed)
-        {
-            return Task.CompletedTask;
-        }
-
-        if (exception is not null)
-        {
-            _logger.LogError(exception, "Relay client connection closed with error");
-        }
-        else
-        {
-            _logger.LogInformation("Relay client connection closed");
-        }
-
-        if (_ticketRefresh is null)
-        {
-            RaiseTerminalClosed(exception);
-            return Task.CompletedTask;
-        }
-
-        lock (_connectionLock)
-        {
-            // Ignore notifications from superseded connections whose handlers were
-            // detached concurrently with this callback dispatch.
-            if (!ReferenceEquals(connection, _hubConnection))
-            {
-                return Task.CompletedTask;
-            }
-
-            // Coalescing write: if a signal is already pending it is dropped — exactly
-            // one follow-up pass is retained, matching the previous single-flight logic.
-            _rebuildSignal.Writer.TryWrite(0);
-        }
-
-        return Task.CompletedTask;
-    }
-
-    /// <summary>
-    /// Single-consumer rebuild loop. Each queued signal runs one recovery pass
-    /// (<see cref="HandleRebuildSignalAsync"/>); overlapping close notifications that
-    /// arrive mid-pass are coalesced into at most one pending signal (see
-    /// <see cref="OnClosed"/>). The loop must never terminate on an unexpected fault:
-    /// a throwing iteration is logged and the loop keeps serving later signals.
-    /// </summary>
-    private async Task RebuildLoopAsync()
-    {
-        try
-        {
-            await foreach (var _ in _rebuildSignal.Reader.ReadAllAsync(_rebuildCts.Token))
-            {
-                try
-                {
-                    await HandleRebuildSignalAsync();
-                }
-                catch (OperationCanceledException) when (_isDisposed)
-                {
-                    // Disposal canceled the in-flight pass.
-                }
-                catch (Exception ex)
-                {
-                    // Never let one bad iteration kill the loop: unexpected errors
-                    // (e.g. throwing event handlers) must not disable future recovery.
-                    _logger.LogError(ex, "Unexpected error while rebuilding the relay connection");
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Normal shutdown: the rebuild cancellation token fires during disposal.
-        }
-    }
-
-    private async Task HandleRebuildSignalAsync()
-    {
-        if (_isDisposed)
-        {
-            return;
-        }
-
-        lock (_connectionLock)
-        {
-            _isTransitioning = true;
-        }
-
-        try
-        {
-            HubConnection currentConnection;
-            lock (_connectionLock)
-            {
-                currentConnection = _hubConnection;
-            }
-
-            if (currentConnection.State == HubConnectionState.Connected)
-            {
-                // Defensive: through natural SignalR events this is not reachable today
-                // (Closed fires once per connection, after automatic reconnect has given
-                // up). It guards against spurious or duplicate close notifications that
-                // arrive while a pass is in flight: when the connection has already
-                // recovered by the time the coalesced signal is dequeued, only the
-                // queued messages still need to reach it — a full ticket refresh would
-                // be wasted work. Exercised by the duplicate-close coalescing test.
-                _logger.LogInformation(
-                    "Relay rebuild signal arrived after the connection recovered; flushing the outbound queue");
-                await DrainOutboundQueueAsync(currentConnection);
-                return;
-            }
-
-            await RefreshAndRestartAsync();
-        }
-        finally
-        {
-            lock (_connectionLock)
-            {
-                _isTransitioning = false;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Obtains a fresh relay ticket via the refresh delegate, rebuilds the underlying
-    /// <see cref="HubConnection"/> around it and restarts it. Runs as one pass of the
-    /// rebuild loop; overlapping close notifications are coalesced by
-    /// <see cref="OnClosed"/> into a follow-up signal. Raises the terminal
-    /// <see cref="Closed"/> event when the delegate fails, returns null, or the bounded
-    /// restart attempts are exhausted.
-    /// </summary>
-    private async Task RefreshAndRestartAsync()
-    {
-        RelayTicketRefresh? refresh;
-        try
-        {
-            refresh = await _ticketRefresh!(_rebuildCts.Token);
-        }
-        catch (OperationCanceledException) when (_isDisposed)
-        {
-            return;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Relay ticket refresh failed; closing the connection terminally");
-            RaiseTerminalClosed(ex);
-            return;
-        }
-
-        if (_isDisposed)
-        {
-            return;
-        }
-
-        if (refresh is null)
-        {
-            _logger.LogWarning(
-                "Relay ticket refresh returned no ticket; closing the connection terminally");
-            RaiseTerminalClosed(null);
-            return;
-        }
-
-        var newConnection = BuildConnection(_hubUrl, refresh.RelayTicket, refresh.ExpiresAt);
-        HubConnection oldConnection;
-        lock (_connectionLock)
-        {
-            oldConnection = _hubConnection;
-            DetachHandlers(oldConnection);
-            _hubConnection = newConnection;
-        }
-
-        try
-        {
-            AttachHandlers(newConnection);
-
-            Exception? lastStartFailure = null;
-            for (var attempt = 1; attempt <= MaxRestartAttempts && !_isDisposed; attempt++)
-            {
-                try
-                {
-                    await newConnection.StartAsync(_rebuildCts.Token);
-                    lastStartFailure = null;
-                    break;
-                }
-                catch (OperationCanceledException) when (_isDisposed)
-                {
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    lastStartFailure = ex;
-                    _logger.LogWarning(
-                        ex,
-                        "Failed to restart relay connection with fresh ticket (attempt {Attempt}/{MaxAttempts})",
-                        attempt,
-                        MaxRestartAttempts);
-                    try
-                    {
-                        await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), _rebuildCts.Token);
-                    }
-                    catch (OperationCanceledException) when (_isDisposed)
-                    {
-                        return;
-                    }
-                }
-            }
-
-            if (lastStartFailure is not null)
-            {
-                _logger.LogError(
-                    "Giving up restarting relay connection after {MaxAttempts} attempts",
-                    MaxRestartAttempts);
-                RaiseTerminalClosed(lastStartFailure);
-                return;
-            }
-
-            if (_isDisposed)
-            {
-                return;
-            }
-
-            _logger.LogInformation(
-                "Relay client rebuilt its connection with a fresh relay ticket (connection ID {ConnectionId})",
-                newConnection.ConnectionId);
-
-            RaiseEvent(() => Reconnected?.Invoke(newConnection.ConnectionId));
-
-            await DrainOutboundQueueAsync(newConnection);
-        }
-        finally
-        {
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await oldConnection.DisposeAsync();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogDebug(ex, "Error disposing superseded relay connection");
-                }
-            });
-        }
-    }
-
-    private void RaiseTerminalClosed(Exception? exception)
-    {
-        // Raise Closed at most once: disposal and a concurrent terminal rebuild
-        // failure must not produce duplicate notifications.
-        if (Interlocked.Exchange(ref _terminalClosedRaised, 1) != 0)
-        {
-            return;
-        }
-
-        // Terminal close contract: Closed fires when no refresh delegate is configured,
-        // when the delegate fails or returns no ticket, when the bounded restart attempts
-        // are exhausted, or when the publisher is disposed. Callers must obtain a fresh
-        // relay ticket and recreate the publisher once Closed is raised.
-        RaiseEvent(() => Closed?.Invoke(exception));
     }
 }

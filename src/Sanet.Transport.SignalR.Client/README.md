@@ -146,14 +146,26 @@ publisher.Closed += error =>
 
 Semantics:
 
-- **`Closed`** is raised only when no refresh delegate is configured, the delegate fails or
-  returns null, or the bounded restart attempts are exhausted — i.e. it is truly terminal.
-- **Outbound queuing**: messages published while reconnecting or rebuilding are queued
-  (bounded FIFO, 500 messages by default) and flushed in order after reconnection. When the
-  queue is full, `PublishMessage` throws `TransportPublishException` with
-  `PublishFailureReason.QueueFull`; publishing while disconnected with no rebuild in progress
-  throws `TransportPublishException` with `PublishFailureReason.NotConnected`.
-  Catch `TransportPublishException` and retry as appropriate for your game.
+- **`Closed`** is raised only when no recovery path exists (no ticket-expiry reconnect window
+  and no refresh delegate), the delegate fails or returns null, or the bounded restart attempts
+  are exhausted — i.e. it is truly terminal.
+- **Unified outbound pipeline**: every message published via `PublishMessage` takes the same
+  path. While the connection is connected it is sent immediately; while the connection is
+  recovering (automatic reconnect or ticket-refresh rebuild) it is held in a bounded FIFO
+  (500 messages by default) and delivered in order once connectivity returns — there is no
+  separate "queued vs direct" send path, so ordering can never be violated by a recovery.
+- **Delivery-completion**: the task returned by `PublishMessage` completes when the message has
+  actually been handed to the transport (or faults when delivery definitively failed), so
+  awaiting callers get truthful backpressure across recovery windows.
+- **Failure modes**: `PublishMessage` throws `TransportPublishException` with
+  `PublishFailureReason.QueueFull` synchronously when the pipeline is full, and faults awaiting
+  callers with `PublishFailureReason.NotConnected` after a terminal close or when the publisher
+  is disconnected with no recovery path configured. Catch `TransportPublishException` and retry
+  as appropriate for your application.
+- **Events** (`Reconnecting`, `Reconnected`, `Closed`, peer/host events) are dispatched
+  asynchronously off the raising thread — via the `SynchronizationContext` captured at
+  construction when one exists. Event handlers may call `PublishMessage` reentrantly; ordering
+  of such messages relative to any recovery backlog is preserved by the pipeline's FIFO.
 - **Breaking change**: publishing while not connected used to throw
   `InvalidOperationException("Relay client is not connected.")`; it now throws
   `TransportPublishException(PublishFailureReason.NotConnected)`.
