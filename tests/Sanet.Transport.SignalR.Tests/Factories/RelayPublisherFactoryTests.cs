@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Sanet.Transport.SignalR.Client.Factories;
 using Sanet.Transport.SignalR.Client.Publishers;
+using Sanet.Transport.SignalR.Tests.Publishers;
 using Shouldly;
 using Xunit;
 
@@ -124,6 +125,35 @@ public class RelayPublisherFactoryTests
 
         await using var _ = publisher;
         publisher.ShouldBeOfType<RelayClientPublisher>().IsConnected.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithTicketRefresh_RebuildsConnectionAfterDropWithoutClosing()
+    {
+        const string refreshedTicket = "refreshed-relay-ticket";
+        await using var host = await RebuildTestRelayHubHost.StartAsync(
+            [RelayTicket, refreshedTicket],
+            abortTicket: RelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+
+        var options = Options(hubUrl) with
+        {
+            TicketRefresh = _ => Task.FromResult<RelayTicketRefresh?>(
+                new RelayTicketRefresh(refreshedTicket, DateTimeOffset.UtcNow.AddMinutes(5)))
+        };
+
+        var publisher = (RelayClientPublisher)await WithTimeout(_sut.Create(options));
+
+        var reconnected = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var closed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        publisher.Reconnected += _ => reconnected.TrySetResult(true);
+        publisher.Closed += _ => closed.TrySetResult(true);
+
+        var completed = await Task.WhenAny(reconnected.Task, closed.Task, Task.Delay(OperationTimeout));
+        completed.ShouldBe(reconnected.Task, "Expected rebuild with fresh ticket after the forced drop");
+        publisher.IsConnected.ShouldBeTrue();
+
+        await publisher.DisposeAsync();
     }
 
     private static async Task<T> WithTimeout<T>(Task<T> task)

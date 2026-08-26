@@ -54,6 +54,14 @@ public sealed class HubOptions
     public int RelayTicketTtlSeconds { get; init; } = 60;
 
     /// <summary>
+    /// How long in seconds a connecting client waits for the room host's SignalR
+    /// connection to register before its <c>OnPeerConnected</c> announcement is
+    /// dropped. Covers the race where a fast client completes its handshake while
+    /// the host is still finishing its own. Zero disables waiting.
+    /// </summary>
+    public int HostConnectionWaitSeconds { get; init; } = 5;
+
+    /// <summary>
     /// Delay in seconds before the host is notified that a peer disconnected.
     /// A reconnect of the same device session within the delay cancels the
     /// notification. Zero reproduces immediate-notification behavior.

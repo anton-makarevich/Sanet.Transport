@@ -102,6 +102,74 @@ await publisher.PublishMessage(new TransportMessage
 });
 ```
 
+### 3. Automatic recovery with ticket refresh (`RelayClientPublisher`)
+
+Relay tickets are short-lived. Without extra configuration, a connection drop after the
+ticket window has passed is **terminal**: `Closed` fires and callers must recreate the
+publisher. For games that must survive mid-session network drops (mobile doze, radio
+handoffs), supply a `TicketRefresh` delegate: when the connection closes, the publisher
+invokes it to obtain a fresh relay ticket, transparently rebuilds and restarts the
+underlying SignalR connection (preserving subscribers and public events), flushes any
+queued outbound messages, and raises `Reconnected`.
+
+```csharp
+using Sanet.Transport.SignalR.Client.Factories;
+using Sanet.Transport.SignalR.Client.Publishers;
+
+// Fetch the initial relay ticket from the REST API using the stored session token.
+var initialResponse = await relayRoomClient.GetRelayTicket(roomCode, sessionToken, CancellationToken.None);
+var relayTicket = initialResponse.Ticket!;
+
+var options = new RelayPublisherOptions
+{
+    HubUrl = hubUrl,
+    RoomCode = roomCode,
+    RelayTicket = relayTicket,
+    TicketRefresh = async ct =>
+    {
+        // Fetch a fresh relay ticket from the REST API using the stored session token.
+        var response = await relayRoomClient.GetRelayTicket(roomCode, sessionToken, ct);
+        return response.Success
+            ? new RelayTicketRefresh(response.Ticket!, response.ExpiresAt)
+            : null; // null (or a thrown exception) makes the close terminal -> Closed fires
+    }
+};
+
+var factory = new RelayPublisherFactory(loggerFactory);
+await using var publisher = await factory.Create(options);
+
+publisher.Reconnected += connectionId =>
+    Console.WriteLine($"Recovered with fresh ticket, connection {connectionId}");
+publisher.Closed += error =>
+    Console.WriteLine($"Terminal close — recreate the publisher with a fresh ticket");
+```
+
+Semantics:
+
+- **`Closed`** is raised only when no recovery path exists (no ticket-expiry reconnect window
+  and no refresh delegate), the delegate fails or returns null, or the bounded restart attempts
+  are exhausted — i.e. it is truly terminal.
+- **Unified outbound pipeline**: every message published via `PublishMessage` takes the same
+  path. While the connection is connected it is sent immediately; while the connection is
+  recovering (automatic reconnect or ticket-refresh rebuild) it is held in a bounded FIFO
+  (500 messages by default) and delivered in order once connectivity returns — there is no
+  separate "queued vs direct" send path, so ordering can never be violated by a recovery.
+- **Delivery-completion**: the task returned by `PublishMessage` completes when the message has
+  actually been handed to the transport (or faults when delivery definitively failed), so
+  awaiting callers get truthful backpressure across recovery windows.
+- **Failure modes**: `PublishMessage` throws `TransportPublishException` with
+  `PublishFailureReason.QueueFull` synchronously when the pipeline is full, and faults awaiting
+  callers with `PublishFailureReason.NotConnected` after a terminal close or when the publisher
+  is disconnected with no recovery path configured. Catch `TransportPublishException` and retry
+  as appropriate for your application.
+- **Events** (`Reconnecting`, `Reconnected`, `Closed`, peer/host events) are dispatched
+  asynchronously off the raising thread — via the `SynchronizationContext` captured at
+  construction when one exists. Event handlers may call `PublishMessage` reentrantly; ordering
+  of such messages relative to any recovery backlog is preserved by the pipeline's FIFO.
+- **Breaking change**: publishing while not connected used to throw
+  `InvalidOperationException("Relay client is not connected.")`; it now throws
+  `TransportPublishException(PublishFailureReason.NotConnected)`.
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](../../LICENSE) file for details.

@@ -195,7 +195,7 @@ public class RelayRpcTests
         var roomManager = Substitute.For<IRoomManager>();
         var hub = new RelayHub(
             rateLimiter, roomManager, Substitute.For<IPeerNotificationScheduler>(), options,
-            NullLogger<RelayHub>.Instance);
+            TimeProvider.System, NullLogger<RelayHub>.Instance);
 
         const string roomCode = "UTF8TEST";
         var session = new RoomSession("tok", roomCode, Guid.NewGuid(), RoomRole.Host,

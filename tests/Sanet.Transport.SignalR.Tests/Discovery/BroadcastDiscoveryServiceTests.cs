@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -13,6 +14,13 @@ public class BroadcastDiscoveryServiceTests
 {
     private const int TestPort = 15001;
     private readonly IPEndPoint _expectedBroadcastEndpoint = new(IPAddress.Broadcast, TestPort);
+
+    private static async Task WaitForAsync(Func<bool> condition, int timeoutMs = 5000)
+    {
+        var sw = Stopwatch.StartNew();
+        while (!condition() && sw.ElapsedMilliseconds < timeoutMs)
+            await Task.Delay(10);
+    }
 
     private readonly IUdpClientFactory _mockFactory;
     private readonly IUdpClientWrapper _mockSenderClient;
@@ -106,7 +114,7 @@ public class BroadcastDiscoveryServiceTests
 
         // Act
         _broadcastDiscoveryService.StartListening();
-        await Task.Delay(100); // Allow time for the listener task to start
+        await WaitForAsync(() => _mockListenerClient.ReceivedCalls().Count() >= 1);
 
         // Assert
         _mockFactory.Received(1).CreateListenerClient(TestPort);
@@ -129,7 +137,7 @@ public class BroadcastDiscoveryServiceTests
 
         // Act
         _broadcastDiscoveryService.StartListening();
-        await Task.Delay(100); // Allow ReceiveAsync to complete
+        await WaitForAsync(() => discoveredUrl != null && _mockListenerClient.ReceivedCalls().Count() >= 2);
 
         // Assert
         discoveredUrl.ShouldBe(hubUrl); // Use Shouldly
@@ -145,7 +153,7 @@ public class BroadcastDiscoveryServiceTests
         
         // Act
         _broadcastDiscoveryService.StartListening();
-        await Task.Delay(50); // Small delay
+        await WaitForAsync(() => _mockFactory.ReceivedCalls().Count() >= 1);
         _broadcastDiscoveryService.StartListening(); // Call again
         await Task.Delay(50); 
         
@@ -161,7 +169,7 @@ public class BroadcastDiscoveryServiceTests
         _mockListenerClient.ReceiveAsync().Returns(receiveTcs.Task); // Block listener
 
         _broadcastDiscoveryService.StartListening();
-        await Task.Delay(100); // Let loop start
+        await WaitForAsync(() => _mockListenerClient.ReceivedCalls().Count() >= 1); // Let loop start
         
         // Act
         _broadcastDiscoveryService.Dispose();
@@ -197,7 +205,7 @@ public class BroadcastDiscoveryServiceTests
         // Act
         _broadcastDiscoveryService.StartListening();
         // Wait long enough for the exception path and the next call
-        await Task.Delay(500); 
+        await WaitForAsync(() => _mockListenerClient.ReceivedCalls().Count() >= 2);
 
         // Assert
         // Verify ReceiveAsync was called twice: once throwing, once blocking
@@ -244,7 +252,7 @@ public class BroadcastDiscoveryServiceTests
         
         // Act
         ((IDiscoveryService)_broadcastDiscoveryService).StartListening();
-        await Task.Delay(100); // Allow time for the exception to be handled
+        await WaitForAsync(() => _mockFactory.ReceivedCalls().Count() >= 1);
         
         // Assert
         // Verify the factory was called but no listener operations were performed
@@ -261,7 +269,7 @@ public class BroadcastDiscoveryServiceTests
         
         // Act
         ((IDiscoveryService)_broadcastDiscoveryService).StartListening();
-        await Task.Delay(100); // Allow time for the listener task to start
+        await WaitForAsync(() => _mockListenerClient.ReceivedCalls().Count() >= 1); // Allow time for the listener task to start
         ((IDiscoveryService)_broadcastDiscoveryService).StopListening(); // This will call CloseAndDisposeListener
         await Task.Delay(100); // Allow time for the exception to be handled
         

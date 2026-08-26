@@ -77,6 +77,9 @@ public static class HubAppBuilder
                 o => o.PeerDisconnectNotificationDelaySeconds >= 0,
                 $"{HubOptions.SectionName}:PeerDisconnectNotificationDelaySeconds must be greater than or equal to zero.")
             .Validate(
+                o => o.HostConnectionWaitSeconds >= 0,
+                $"{HubOptions.SectionName}:HostConnectionWaitSeconds must be greater than or equal to zero.")
+            .Validate(
                 o => o.SignalR.KeepAliveIntervalSeconds > 0,
                 $"{HubOptions.SectionName}:SignalR:KeepAliveIntervalSeconds must be greater than zero.")
             .Validate(
