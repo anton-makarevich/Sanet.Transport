@@ -12,9 +12,9 @@ namespace Sanet.Transport.SignalR.Client.Publishers;
 /// <para>
 /// Connects outbound to a cloud RelayHub using WebSockets and short-lived relay-ticket
 /// authentication. The relay ticket is bound into the connection URL at construction time.
-/// When <paramref name="relayTicketExpiresAt"/> is supplied, automatic reconnect is configured
+/// When <c>relayTicketExpiresAt</c> is supplied, automatic reconnect is configured
 /// with a retry window that ends before the ticket expires, so repeatable unexpired tickets are
-/// reused after transient transport failures. When <paramref name="ticketRefresh"/> is supplied,
+/// reused after transient transport failures. When <c>ticketRefresh</c> is supplied,
 /// a closed connection is not terminal: the delegate is invoked to obtain a fresh relay ticket,
 /// the underlying <see cref="HubConnection"/> is rebuilt around it (preserving subscribers and
 /// public events) and restarted.
@@ -23,7 +23,7 @@ namespace Sanet.Transport.SignalR.Client.Publishers;
 /// Concurrency model: a single lifecycle actor owns connection identity and recovery, and a
 /// single outbound pump is the only code that ever sends messages. Every message published via
 /// <see cref="PublishMessage"/> enters one bounded pipeline; while the connection is recovering,
-/// the pump pauses and messages accumulate (bounded by <paramref name="outboundQueueCapacity"/>),
+/// the pump pauses and messages accumulate (bounded by <c>outboundQueueCapacity</c>),
 /// resuming in FIFO order once connectivity returns — there is no separate "queued vs direct"
 /// send path. The task returned by <see cref="PublishMessage"/> completes when the message has
 /// actually been sent (or definitively failed), so awaiting callers get truthful backpressure
@@ -48,6 +48,7 @@ namespace Sanet.Transport.SignalR.Client.Publishers;
 public class RelayClientPublisher : ITransportPublisher
 {
     private const int MaxRestartAttempts = 3;
+    private const int MaxSendRetryFailures = 10;
     private const int DefaultOutboundQueueCapacity = 500;
     private static readonly TimeSpan SendRetryDelay = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan RestartRetryDelay = TimeSpan.FromMilliseconds(250);
@@ -76,10 +77,16 @@ public class RelayClientPublisher : ITransportPublisher
         new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
 
     // Published by the lifecycle actor only; readable from any thread without a lock.
-    private volatile ConnectionSnapshot _snapshot = null!;
+    private volatile ConnectionSnapshot _snapshot;
 
     private readonly Task _lifecycleTask;
     private readonly Task _pumpTask;
+
+    // In-flight background operations tracked so disposal can await them before touching the
+    // published connection (a rebuild may have created a replacement that is not in _snapshot yet).
+    private volatile Task? _activeStartTask;
+    private volatile Task? _activeRebuildTask;
+
     private long _sequenceNumber;
     private volatile bool _isDisposed;
     private int _terminalClosedRaised;
@@ -314,7 +321,7 @@ public class RelayClientPublisher : ITransportPublisher
     /// Publishes a transport message to the relay hub. Every message takes the same unified
     /// pipeline: while the connection is connected the message is sent immediately; while the
     /// connection is recovering (automatic reconnect or ticket-refresh rebuild) it is held in
-    /// the bounded pipeline (capacity <paramref name="outboundQueueCapacity"/>) and delivered
+    /// the bounded pipeline (capacity <c>outboundQueueCapacity</c>) and delivered
     /// in order once connectivity returns. The returned task completes when the message has
     /// been sent, or throws:
     /// <see cref="TransportPublishException"/> with <see cref="PublishFailureReason.QueueFull"/>
@@ -389,6 +396,25 @@ public class RelayClientPublisher : ITransportPublisher
             catch (Exception ex)
             {
                 _logger.LogDebug(ex, "Internal loop ended with an error during disposal");
+            }
+        }
+
+        // A start or rebuild may still be running outside the loops; wait for them so a rebuild's
+        // replacement connection is fully settled before we capture, stop and dispose the snapshot.
+        foreach (var backgroundTask in new[] { _activeStartTask, _activeRebuildTask })
+        {
+            if (backgroundTask is null)
+            {
+                continue;
+            }
+
+            try
+            {
+                await backgroundTask;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Background lifecycle operation ended with an error during disposal");
             }
         }
 
@@ -472,6 +498,7 @@ public class RelayClientPublisher : ITransportPublisher
                             }
 
                             activeStart = RunStartAsync(current, cmd.Completion);
+                            _activeStartTask = activeStart;
                             break;
 
                         case LifecycleCommand.StartCompleted cmd:
@@ -539,6 +566,7 @@ public class RelayClientPublisher : ITransportPublisher
 
                             PublishSnapshot(current, sendEnabled: false);
                             activeRebuild = RunRebuildAsync();
+                            _activeRebuildTask = activeRebuild;
                             break;
 
                         case LifecycleCommand.RebuildCompleted cmd:
@@ -630,71 +658,74 @@ public class RelayClientPublisher : ITransportPublisher
             error = ex;
         }
 
-        HubConnection? newConnection = null;
-        if (error is null && refresh is null)
+        switch (error)
         {
-            _logger.LogWarning("Relay ticket refresh returned no ticket; closing the connection terminally");
-        }
-        else if (error is null)
-        {
-            newConnection = BuildConnection(_hubUrl, refresh!.RelayTicket, refresh.ExpiresAt);
-            AttachHandlers(newConnection);
-
-            Exception? lastStartFailure = null;
-            for (var attempt = 1; attempt <= MaxRestartAttempts && !_isDisposed; attempt++)
+            case null when refresh is null:
+                _logger.LogWarning("Relay ticket refresh returned no ticket; closing the connection terminally");
+                break;
+            case null:
             {
-                try
+                var newConnection = BuildConnection(_hubUrl, refresh.RelayTicket, refresh.ExpiresAt);
+                AttachHandlers(newConnection);
+
+                Exception? lastStartFailure = null;
+                for (var attempt = 1; attempt <= MaxRestartAttempts && !_isDisposed; attempt++)
                 {
-                    await newConnection.StartAsync(_lifetimeCts.Token);
-                    lastStartFailure = null;
-                    break;
-                }
-                catch (OperationCanceledException) when (_isDisposed)
-                {
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    lastStartFailure = ex;
-                    _logger.LogWarning(
-                        ex,
-                        "Failed to restart relay connection with fresh ticket (attempt {Attempt}/{MaxAttempts})",
-                        attempt,
-                        MaxRestartAttempts);
                     try
                     {
-                        await Task.Delay(TimeSpan.FromMilliseconds(RestartRetryDelay.Milliseconds * attempt),
-                            _lifetimeCts.Token);
+                        await newConnection.StartAsync(_lifetimeCts.Token);
+                        lastStartFailure = null;
+                        break;
                     }
                     catch (OperationCanceledException) when (_isDisposed)
                     {
+                        // The replacement never went live; dispose it so it cannot linger.
+                        DetachHandlers(newConnection);
+                        _ = DisposeSupersededConnectionAsync(newConnection);
                         return;
                     }
+                    catch (Exception ex)
+                    {
+                        lastStartFailure = ex;
+                        _logger.LogWarning(
+                            ex,
+                            "Failed to restart relay connection with fresh ticket (attempt {Attempt}/{MaxAttempts})",
+                            attempt,
+                            MaxRestartAttempts);
+                        try
+                        {
+                            await Task.Delay(RestartRetryDelay * attempt,
+                                _lifetimeCts.Token);
+                        }
+                        catch (OperationCanceledException) when (_isDisposed)
+                        {
+                            // The replacement never went live; dispose it so it cannot linger.
+                            DetachHandlers(newConnection);
+                            _ = DisposeSupersededConnectionAsync(newConnection);
+                            return;
+                        }
+                    }
                 }
-            }
 
-            if (!_isDisposed && lastStartFailure is null)
-            {
-                _commands.Writer.TryWrite(new LifecycleCommand.RebuildCompleted(newConnection, null));
-                return;
-            }
+                if (!_isDisposed && lastStartFailure is null)
+                {
+                    _commands.Writer.TryWrite(new LifecycleCommand.RebuildCompleted(newConnection, null));
+                    return;
+                }
 
-            if (lastStartFailure is not null)
-            {
-                _logger.LogError(
-                    "Giving up restarting relay connection after {MaxAttempts} attempts",
-                    MaxRestartAttempts);
-                error = lastStartFailure;
-            }
+                if (lastStartFailure is not null)
+                {
+                    _logger.LogError(
+                        "Giving up restarting relay connection after {MaxAttempts} attempts",
+                        MaxRestartAttempts);
+                    error = lastStartFailure;
+                }
 
-            // The replacement connection never went live; dispose it quietly.
-            if (newConnection is not null)
-            {
+                // The replacement connection never went live; dispose it quietly.
                 DetachHandlers(newConnection);
                 _ = DisposeSupersededConnectionAsync(newConnection);
+                break;
             }
-
-            newConnection = null;
         }
 
         if (_isDisposed)
@@ -731,6 +762,7 @@ public class RelayClientPublisher : ITransportPublisher
     private async Task RunOutboundPumpAsync()
     {
         PendingSend? held = null;
+        var heldSendFailures = 0;
         try
         {
             while (true)
@@ -799,16 +831,34 @@ public class RelayClientPublisher : ITransportPublisher
                     }
 
                     held = next;
+                    heldSendFailures = 0;
                 }
 
+                var currentHeld = held;
                 try
                 {
-                    await SendEnvelopeAsync(snapshot.Connection, held.Message);
-                    held.Completion.TrySetResult(null);
+                    await SendEnvelopeAsync(snapshot.Connection, currentHeld.Message);
+                    currentHeld.Completion.TrySetResult(null);
                     held = null;
+                    heldSendFailures = 0;
                 }
                 catch (Exception ex) when (!_isDisposed)
                 {
+                    heldSendFailures++;
+                    if (heldSendFailures >= MaxSendRetryFailures)
+                    {
+                        _logger.LogError(
+                            ex,
+                            "Failed to send queued message after {MaxFailures} consecutive attempts; faulting it",
+                            MaxSendRetryFailures);
+                        currentHeld.Completion.TrySetException(new TransportPublishException(
+                            PublishFailureReason.NotConnected,
+                            "Failed to send message after repeated attempts while disconnected."));
+                        held = null;
+                        heldSendFailures = 0;
+                        continue;
+                    }
+
                     _logger.LogError(ex, "Failed to send queued message; retrying");
                     await Task.Delay(SendRetryDelay, _lifetimeCts.Token);
                     // Loop back: the snapshot is re-read, so a connection drop parks the pump

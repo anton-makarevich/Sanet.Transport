@@ -17,8 +17,9 @@ public class RelayClientPublisherTests
     private const string ValidRoomCode = "ROOM01";
     private const string ValidRelayTicket = "token-abc-123";
     private const string RefreshedRelayTicket = "token-refreshed-456";
+    private static readonly string[] SourceArray = ["m1", "m2"];
 
-        [Fact]
+    [Fact]
     public void Constructor_WithValidArgs_CreatesPublisher()
     {
         var logger = Substitute.For<ILogger<RelayClientPublisher>>();
@@ -1063,7 +1064,6 @@ public class RelayClientPublisherTests
         // when the test host aborts connections aggressively.
         publisher.Reconnected += _ =>
         {
-            Console.WriteLine("[TEST] Reconnected handler entered");
             publisher.PublishMessage(new TransportMessage
             {
                 MessageType = "TestCommand",
@@ -1212,8 +1212,7 @@ public class RelayClientPublisherTests
         // Wait for the drop; messages published during the rebuild must be queued.
         // The refresh is gated so the rebuild stays pending until the messages are queued.
         await refreshStarted.Task;
-        var publishTasks = new[] { "m1", "m2" }
-            .Select(payload => publisher.PublishMessage(new TransportMessage
+        var publishTasks = SourceArray.Select(payload => publisher.PublishMessage(new TransportMessage
             {
                 MessageType = "TestCommand",
                 SourceId = Guid.NewGuid(),
@@ -1425,7 +1424,7 @@ public class RelayClientPublisherTests
 
             var completed = await Task.WhenAny(received.Task, Task.Delay(TimeSpan.FromSeconds(15)));
             completed.ShouldBe(received.Task, "a reentrant publish from an event handler must complete");
-            received.Task.Result.ShouldBe("reentrant");
+            (await received.Task).ShouldBe("reentrant");
         }
     }
 
