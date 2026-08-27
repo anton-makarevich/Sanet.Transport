@@ -11,8 +11,21 @@ public class ChannelTransportPublisher : ITransportPublisher, IDisposable
     private readonly List<Action<TransportMessage>> _subscribers = [];
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _processingTask;
+    private TransportConnectionState _connectionState = TransportConnectionState.Connected;
     private bool _isDisposed;
     
+    /// <summary>
+    /// Gets the current transport connection state. The channel publisher reports
+    /// <see cref="TransportConnectionState.Connected"/> from construction until it is disposed.
+    /// </summary>
+    public TransportConnectionState ConnectionState => _connectionState;
+
+    /// <summary>
+    /// Event raised on every transport connection-state transition. Raised once with
+    /// <see cref="TransportConnectionState.Closed"/> when the publisher is disposed.
+    /// </summary>
+    public event Action<TransportConnectionState>? ConnectionStateChanged;
+
     /// <summary>
     /// Creates a new instance of ChannelTransportPublisher
     /// </summary>
@@ -137,6 +150,9 @@ public class ChannelTransportPublisher : ITransportPublisher, IDisposable
         }
 
         _isDisposed = true;
+
+        _connectionState = TransportConnectionState.Closed;
+        ConnectionStateChanged?.Invoke(TransportConnectionState.Closed);
 
         // Request cancellation
         _cts.Cancel();

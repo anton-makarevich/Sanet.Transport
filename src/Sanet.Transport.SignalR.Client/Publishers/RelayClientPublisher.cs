@@ -91,6 +91,7 @@ public class RelayClientPublisher : ITransportPublisher
     private volatile bool _isDisposed;
     private int _terminalClosedRaised;
     private long _transitionSequence;
+    private TransportConnectionState _lastConnectionState = TransportConnectionState.Disconnected;
 
     // Closed-handler bookkeeping per connection instance. Mostly actor-owned, but the
     // rebuild background task attaches/detaches too, so dictionary access stays guarded.
@@ -185,6 +186,13 @@ public class RelayClientPublisher : ITransportPublisher
     public event Action<Exception?>? Closed;
 
     /// <summary>
+    /// Event raised on every transport connection-state transition. Reports transport
+    /// connectivity only, not room membership — it is not raised when peers or the host
+    /// connect or disconnect from the room.
+    /// </summary>
+    public event Action<TransportConnectionState>? ConnectionStateChanged;
+
+    /// <summary>
     /// Gets the current state of the underlying SignalR connection.
     /// </summary>
     public HubConnectionState State => _snapshot.Connection.State;
@@ -193,6 +201,20 @@ public class RelayClientPublisher : ITransportPublisher
     /// Gets whether the publisher is currently connected to the hub.
     /// </summary>
     public bool IsConnected => _snapshot.Connection.State == HubConnectionState.Connected;
+
+    /// <summary>
+    /// Gets the current transport connection state, derived from the published connection
+    /// snapshot: <see cref="HubConnectionState.Connecting"/> maps to
+    /// <see cref="TransportConnectionState.Connecting"/>, <see cref="HubConnectionState.Connected"/>
+    /// to <see cref="TransportConnectionState.Connected"/>, <see cref="HubConnectionState.Reconnecting"/>
+    /// to <see cref="TransportConnectionState.Reconnecting"/>, <see cref="HubConnectionState.Disconnected"/>
+    /// to <see cref="TransportConnectionState.Disconnected"/>, and a terminally closed snapshot maps to
+    /// <see cref="TransportConnectionState.Closed"/>.
+    /// </summary>
+    public TransportConnectionState ConnectionState =>
+        Volatile.Read(ref _terminalClosedRaised) == 1
+            ? TransportConnectionState.Closed
+            : ConnectionStateFrom(_snapshot);
 
     /// <summary>
     /// Creates a new instance of <see cref="RelayClientPublisher"/>.
@@ -627,9 +649,47 @@ public class RelayClientPublisher : ITransportPublisher
     private void PublishSnapshot(HubConnection connection, bool sendEnabled, bool terminallyClosed = false)
     {
         _snapshot = new ConnectionSnapshot(connection, sendEnabled, _hasRecoveryPath, terminallyClosed);
+        if (terminallyClosed)
+        {
+            // The Closed-state transition is raised exactly once by RaiseTerminalClosed,
+            // which is guarded by the _terminalClosedRaised flag.
+            _lastConnectionState = TransportConnectionState.Closed;
+        }
+        else
+        {
+            RaiseStateTransition(ConnectionStateFrom(_snapshot));
+        }
+
         // Signal on every transition, not only enables: a parked pump must also wake for
         // terminal close (to fault its backlog) even though sending stays disabled.
         SignalPump();
+    }
+
+    private TransportConnectionState ConnectionStateFrom(ConnectionSnapshot snapshot)
+    {
+        if (snapshot.TerminallyClosed)
+        {
+            return TransportConnectionState.Closed;
+        }
+
+        return snapshot.Connection.State switch
+        {
+            HubConnectionState.Connecting => TransportConnectionState.Connecting,
+            HubConnectionState.Connected => TransportConnectionState.Connected,
+            HubConnectionState.Reconnecting => TransportConnectionState.Reconnecting,
+            _ => TransportConnectionState.Disconnected,
+        };
+    }
+
+    private void RaiseStateTransition(TransportConnectionState state)
+    {
+        if (state == _lastConnectionState)
+        {
+            return;
+        }
+
+        _lastConnectionState = state;
+        RaiseEvent(() => ConnectionStateChanged?.Invoke(state));
     }
 
     private void SignalPump() => _resumeSignal.Writer.TryWrite(0);
@@ -1040,13 +1100,15 @@ public class RelayClientPublisher : ITransportPublisher
 
     private void RaiseTerminalClosed(Exception? exception)
     {
-        // Raise Closed at most once: disposal and a concurrent terminal rebuild
-        // failure must not produce duplicate notifications.
+        // Raise Closed (both the state transition and the event) at most once: disposal and a
+        // concurrent terminal rebuild failure must not produce duplicate notifications.
         if (Interlocked.Exchange(ref _terminalClosedRaised, 1) != 0)
         {
             return;
         }
 
+        _lastConnectionState = TransportConnectionState.Closed;
+        RaiseEvent(() => ConnectionStateChanged?.Invoke(TransportConnectionState.Closed));
         RaiseEvent(() => Closed?.Invoke(exception));
     }
 

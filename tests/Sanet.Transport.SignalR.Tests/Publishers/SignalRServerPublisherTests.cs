@@ -172,4 +172,43 @@ public class SignalRServerPublisherTests
         await publisher.DisposeAsync();
         await Should.NotThrowAsync(async () => await publisher.DisposeAsync());
     }
+
+    [Fact]
+    public void ConnectionState_AfterConstruction_IsConnected()
+    {
+        // Arrange & Act
+        var publisher = new SignalRServerPublisher(Substitute.For<IHubContext<TransportHub>>());
+
+        // Assert
+        publisher.ConnectionState.ShouldBe(TransportConnectionState.Connected);
+    }
+
+    [Fact]
+    public void ConnectionState_AfterDispose_IsClosed()
+    {
+        // Arrange
+        var publisher = new SignalRServerPublisher(Substitute.For<IHubContext<TransportHub>>());
+
+        // Act
+        publisher.Dispose();
+
+        // Assert
+        publisher.ConnectionState.ShouldBe(TransportConnectionState.Closed);
+    }
+
+    [Fact]
+    public async Task ConnectionStateChanged_AfterDispose_FiresOnceWithClosed()
+    {
+        // Arrange
+        var publisher = new SignalRServerPublisher(Substitute.For<IHubContext<TransportHub>>());
+        var states = new List<TransportConnectionState>();
+        publisher.ConnectionStateChanged += states.Add;
+
+        // Act
+        await publisher.DisposeAsync();
+        await publisher.DisposeAsync();
+
+        // Assert
+        states.ShouldBe([TransportConnectionState.Closed]);
+    }
 }

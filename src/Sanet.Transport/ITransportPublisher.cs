@@ -6,6 +6,18 @@ namespace Sanet.Transport;
 public interface ITransportPublisher : IAsyncDisposable
 {
     /// <summary>
+    /// Gets the current transport connection state.
+    /// </summary>
+    TransportConnectionState ConnectionState { get; }
+
+    /// <summary>
+    /// Event raised on every transport connection-state transition.
+    /// <para>Reports transport connectivity only, not room membership: it is not raised when
+    /// peers or hosts connect or disconnect from a room.</para>
+    /// </summary>
+    event Action<TransportConnectionState>? ConnectionStateChanged;
+
+    /// <summary>
     /// Publishes a transport message
     /// </summary>
     /// <param name="message">The message to publish</param>

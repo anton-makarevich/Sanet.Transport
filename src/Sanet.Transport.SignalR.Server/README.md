@@ -62,6 +62,13 @@ serverPublisher.Subscribe(message => {
 });
 ```
 
+## Connection State
+
+`ConnectionState` reports whether the **host publisher** is active: `Connected` while running
+and `Closed` after disposal (with `ConnectionStateChanged` firing once). It does **not**
+indicate whether any client is attached — a running host is `Connected` even with zero
+clients, and clients joining/leaving never change the reported state.
+
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.

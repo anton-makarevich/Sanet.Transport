@@ -661,6 +661,160 @@ public class RelayClientPublisherTests
     }
 
     [Fact]
+    public void ConnectionState_BeforeStart_IsDisconnected()
+    {
+        // Arrange & Act
+        var publisher = CreatePublisher();
+
+        // Assert
+        publisher.ConnectionState.ShouldBe(TransportConnectionState.Disconnected);
+    }
+
+    [Fact]
+    public async Task ConnectionState_AfterStart_IsConnected()
+    {
+        await using var host = await AutoReconnectTestRelayHubHost.StartAsync(ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        await using var publisher = new RelayClientPublisher(
+            hubUrl,
+            ValidRoomCode,
+            ValidRelayTicket,
+            logger,
+            DateTimeOffset.UtcNow.AddSeconds(30));
+
+        // Act
+        await publisher.StartAsync();
+
+        // Assert
+        publisher.ConnectionState.ShouldBe(TransportConnectionState.Connected);
+        publisher.IsConnected.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ConnectionStateChanged_DuringAutoReconnect_MatchesPublishedProperty()
+    {
+        await using var host = await AutoReconnectTestRelayHubHost.StartAsync(ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        await using var publisher = new RelayClientPublisher(
+            hubUrl,
+            ValidRoomCode,
+            ValidRelayTicket,
+            logger,
+            DateTimeOffset.UtcNow.AddSeconds(30));
+
+        var states = new List<TransportConnectionState>();
+        // Every raised state must agree with the property at the instant it is raised.
+        publisher.ConnectionStateChanged += state =>
+        {
+            states.Add(state);
+            publisher.ConnectionState.ShouldBe(state);
+        };
+
+        await publisher.StartAsync();
+
+        // The host aborts the first connection shortly after connect, then keeps subsequent
+        // connections, so the observable sequence is Connected -> Reconnecting -> Connected.
+        await WaitUntilAsync(() => states.Contains(TransportConnectionState.Connected));
+        await WaitUntilAsync(() => states.Contains(TransportConnectionState.Reconnecting));
+        await WaitUntilAsync(() =>
+        {
+            var indexOfReconnecting = states.IndexOf(TransportConnectionState.Reconnecting);
+            return indexOfReconnecting >= 0
+                && states.LastIndexOf(TransportConnectionState.Connected) > indexOfReconnecting;
+        });
+
+        publisher.ConnectionState.ShouldBe(TransportConnectionState.Connected);
+        states[0].ShouldBe(TransportConnectionState.Connected);
+    }
+
+    [Fact]
+    public async Task ConnectionState_AfterTerminalCloseWithoutRecovery_IsClosedAndFiredOnce()
+    {
+        await using var host = await FlakyTestRelayHubHost.StartAsync(ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        await using var publisher = new RelayClientPublisher(hubUrl, ValidRoomCode, ValidRelayTicket, logger);
+
+        var states = new List<TransportConnectionState>();
+        publisher.ConnectionStateChanged += states.Add;
+        var closed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        publisher.Closed += _ => closed.TrySetResult(true);
+
+        await publisher.StartAsync();
+        publisher.ConnectionState.ShouldBe(TransportConnectionState.Connected);
+
+        // No ticket expiry and no refresh delegate: the drop is a terminal close.
+        var completed = await Task.WhenAny(closed.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        completed.ShouldBe(closed.Task, "Expected terminal Closed when the connection drops without recovery");
+
+        // Yield so any duplicate notification could surface.
+        await Task.Delay(500);
+
+        publisher.ConnectionState.ShouldBe(TransportConnectionState.Closed);
+        states.ShouldBe([TransportConnectionState.Connected, TransportConnectionState.Closed]);
+    }
+
+    [Fact]
+    public void ConnectionStateFrom_TerminalSnapshot_MapsToClosed()
+    {
+        // Arrange - cover the terminal branch of the snapshot mapping, which is not
+        // reachable through the public event path (terminal snapshots raise via the
+        // at-most-once guard instead of the mapping function).
+        var snapshotType = typeof(RelayClientPublisher)
+            .GetNestedType("ConnectionSnapshot", BindingFlags.NonPublic)!;
+        var terminalSnapshot = Activator.CreateInstance(snapshotType,
+            null, false, false, true);
+        var method = typeof(RelayClientPublisher).GetMethod("ConnectionStateFrom",
+            BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+        // Act
+        var result = (TransportConnectionState)method.Invoke(
+            CreatePublisher(), [terminalSnapshot])!;
+
+        // Assert
+        result.ShouldBe(TransportConnectionState.Closed);
+    }
+
+    [Fact]
+    public async Task ConnectionState_AfterDispose_ReportsClosedAndFiredOnce()
+    {
+        await using var host = await AutoReconnectTestRelayHubHost.StartAsync(ValidRelayTicket);
+        var hubUrl = host.Urls.First().TrimEnd('/') + "/hubs/relay";
+
+        var logger = Substitute.For<ILogger<RelayClientPublisher>>();
+        var publisher = new RelayClientPublisher(
+            hubUrl,
+            ValidRoomCode,
+            ValidRelayTicket,
+            logger,
+            DateTimeOffset.UtcNow.AddSeconds(30));
+
+        var states = new List<TransportConnectionState>();
+        publisher.ConnectionStateChanged += states.Add;
+        var closed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        publisher.Closed += _ => closed.TrySetResult(true);
+
+        await publisher.StartAsync();
+        publisher.ConnectionState.ShouldBe(TransportConnectionState.Connected);
+
+        // Act
+        await publisher.DisposeAsync();
+        await publisher.DisposeAsync();
+
+        // Assert - Closed state fired exactly once and is terminal
+        var completedState = await Task.WhenAny(closed.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        completedState.ShouldBe(closed.Task, "Expected Closed to be raised on disposal");
+        publisher.ConnectionState.ShouldBe(TransportConnectionState.Closed);
+        states.Count(s => s == TransportConnectionState.Closed).ShouldBe(1);
+        states.Last().ShouldBe(TransportConnectionState.Closed);
+    }
+
+    [Fact]
     public async Task DisposeAsync_CancelsInFlightRebuildAndPreventsFurtherTicketRefresh()
     {
         await using var host = await RebuildTestRelayHubHost.StartAsync(
