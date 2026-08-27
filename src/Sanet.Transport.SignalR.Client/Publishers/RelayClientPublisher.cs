@@ -689,7 +689,7 @@ public class RelayClientPublisher : ITransportPublisher
         }
 
         _lastConnectionState = state;
-        RaiseEvent(() => ConnectionStateChanged?.Invoke(state));
+        RaiseConnectionStateChanged(state);
     }
 
     private void SignalPump() => _resumeSignal.Writer.TryWrite(0);
@@ -1108,7 +1108,7 @@ public class RelayClientPublisher : ITransportPublisher
         }
 
         _lastConnectionState = TransportConnectionState.Closed;
-        RaiseEvent(() => ConnectionStateChanged?.Invoke(TransportConnectionState.Closed));
+        RaiseConnectionStateChanged(TransportConnectionState.Closed);
         RaiseEvent(() => Closed?.Invoke(exception));
     }
 
@@ -1183,6 +1183,30 @@ public class RelayClientPublisher : ITransportPublisher
             _syncContext.Post(_ => handler(), null);
         else
             handler();
+    }
+
+    private void RaiseConnectionStateChanged(TransportConnectionState state)
+    {
+        RaiseEvent(() =>
+        {
+            var handlers = ConnectionStateChanged;
+            if (handlers is null)
+            {
+                return;
+            }
+
+            foreach (var handler in handlers.GetInvocationList())
+            {
+                try
+                {
+                    ((Action<TransportConnectionState>)handler)(state);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error notifying connection-state subscriber");
+                }
+            }
+        });
     }
 
     private void NotifySubscribers(TransportMessage message)

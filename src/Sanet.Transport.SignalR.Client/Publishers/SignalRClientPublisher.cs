@@ -149,7 +149,33 @@ public class SignalRClientPublisher : ITransportPublisher
         }
 
         _connectionState = state;
-        ConnectionStateChanged?.Invoke(state);
+        RaiseConnectionStateChanged(state);
+    }
+
+    /// <summary>
+    /// Raises <see cref="ConnectionStateChanged"/> defensively, so one failing handler cannot
+    /// prevent other handlers from being notified or break the caller's lifecycle transitions.
+    /// </summary>
+    private void RaiseConnectionStateChanged(TransportConnectionState state)
+    {
+        var handlers = ConnectionStateChanged;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((Action<TransportConnectionState>)handler)(state);
+            }
+            catch (Exception ex)
+            {
+                // Log the exception in a real application
+                Console.WriteLine($"Error notifying connection-state subscriber: {ex}");
+            }
+        }
     }
 
     private Task OnReconnecting(Exception? exception)

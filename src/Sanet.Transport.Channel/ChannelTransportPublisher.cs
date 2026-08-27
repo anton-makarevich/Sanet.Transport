@@ -131,6 +131,32 @@ public class ChannelTransportPublisher : ITransportPublisher, IDisposable
     }
     
     /// <summary>
+    /// Raises <see cref="ConnectionStateChanged"/> defensively, so one failing handler cannot
+    /// prevent other handlers from being notified or break the caller's cleanup.
+    /// </summary>
+    private void RaiseConnectionStateChanged(TransportConnectionState state)
+    {
+        var handlers = ConnectionStateChanged;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((Action<TransportConnectionState>)handler)(state);
+            }
+            catch (Exception ex)
+            {
+                // Log the exception in a real application
+                Console.WriteLine($"Error notifying connection-state subscriber: {ex}");
+            }
+        }
+    }
+
+    /// <summary>
     /// Asynchronously disposes resources used by the publisher
     /// </summary>
     public ValueTask DisposeAsync()
@@ -152,7 +178,7 @@ public class ChannelTransportPublisher : ITransportPublisher, IDisposable
         _isDisposed = true;
 
         _connectionState = TransportConnectionState.Closed;
-        ConnectionStateChanged?.Invoke(TransportConnectionState.Closed);
+        RaiseConnectionStateChanged(TransportConnectionState.Closed);
 
         // Request cancellation
         _cts.Cancel();

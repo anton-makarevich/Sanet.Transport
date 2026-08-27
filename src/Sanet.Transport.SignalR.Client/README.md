@@ -194,8 +194,7 @@ room events `PeerConnected`, `PeerDisconnected`, `HostDisconnected` for that).
 | `Connected` | after start completes, and again after every recovery |
 | `Reconnecting` | while the underlying connection is in the ticket-expiry auto-reconnect window |
 | `Disconnected` | while idle or parked during a ticket-refresh rebuild |
-| `Closed` | **terminal** — the drop could not be recovered (no window / no refresh),
-             the refresh delegate failed or returned null, or the publisher was disposed |
+| `Closed` | **terminal** — the drop could not be recovered (no window / no refresh), the refresh delegate failed or returned null, or the publisher was disposed |
 
 `Closed` is terminal for both publishers: after it is raised the publisher cannot reconnect,
 so callers must construct a new publisher (fetch a fresh relay ticket for the relay variant)
