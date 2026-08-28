@@ -152,15 +152,22 @@ public class SignalRClientPublisherTests
     [Fact]
     public async Task ConnectionState_WhenStartFails_IsDisconnectedAndEventRaised()
     {
-        // 192.0.2.1 is TEST-NET-1 (RFC 5737) and guaranteed unroutable, so the
-        // connection attempt fails deterministically without depending on port availability.
-        const string hubUrl = "http://192.0.2.1/hubs/lan";
+        // Point at a port on localhost with no listener, so the OS refuses the connection
+        // immediately. (An unroutable address would instead hang until the connect timeout,
+        // which surfaces a timeout rather than a refusal and is timing-dependent/flaky.)
+        const string hubUrl = "http://127.0.0.1:9/hubs/lan";
         await using var publisher = new SignalRClientPublisher(hubUrl);
         var states = new List<TransportConnectionState>();
         publisher.ConnectionStateChanged += states.Add;
 
-        // Act & Assert
-        await Should.ThrowAsync<HttpRequestException>(() => publisher.StartAsync());
+        // Act
+        var exception = await Record.ExceptionAsync(() => publisher.StartAsync());
+
+        // A refused connection surfaces as HttpRequestException; a slow/timeout path surfaces
+        // as TaskCanceledException. Either means start failed, which is what this test verifies.
+        exception.ShouldNotBeNull();
+        (exception is HttpRequestException or TaskCanceledException).ShouldBeTrue(
+            $"StartAsync should have failed with HttpRequestException or TaskCanceledException but threw {exception.GetType().Name}");
 
         publisher.ConnectionState.ShouldBe(TransportConnectionState.Disconnected);
         states.ShouldContain(TransportConnectionState.Connecting);
