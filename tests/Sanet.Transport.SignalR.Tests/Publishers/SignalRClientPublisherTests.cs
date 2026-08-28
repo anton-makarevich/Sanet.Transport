@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Http;
 using Sanet.Transport.SignalR.Client.Publishers;
 using Shouldly;
@@ -128,8 +129,8 @@ public class SignalRClientPublisherTests
         // Arrange
         await using var app = await LanTestHubHost.StartAsync();
         await using var publisher = new SignalRClientPublisher(app.Urls.First().TrimEnd('/') + "/hubs/lan");
-        var states = new List<TransportConnectionState>();
-        publisher.ConnectionStateChanged += states.Add;
+        var states = new ConcurrentQueue<TransportConnectionState>();
+        publisher.ConnectionStateChanged += states.Enqueue;
 
         // Act
         await publisher.StartAsync();
