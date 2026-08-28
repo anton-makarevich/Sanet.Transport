@@ -9,7 +9,23 @@ public class SignalRClientPublisher : ITransportPublisher
 {
     private readonly HubConnection _hubConnection;
     private readonly List<Action<TransportMessage>> _subscribers = [];
+    private TransportConnectionState _connectionState = TransportConnectionState.Disconnected;
     private bool _isDisposed;
+
+    /// <summary>
+    /// Gets the current transport connection state. Reports
+    /// <see cref="TransportConnectionState.Connecting"/> while a connection attempt is in
+    /// progress, <see cref="TransportConnectionState.Connected"/> while connected,
+    /// <see cref="TransportConnectionState.Reconnecting"/> while the connection is being
+    /// re-established after an unexpected drop, <see cref="TransportConnectionState.Disconnected"/>
+    /// when idle, and <see cref="TransportConnectionState.Closed"/> once the connection is closed.
+    /// </summary>
+    public TransportConnectionState ConnectionState => _connectionState;
+
+    /// <summary>
+    /// Event raised on every transport connection-state transition.
+    /// </summary>
+    public event Action<TransportConnectionState>? ConnectionStateChanged;
 
     /// <summary>
     /// Creates a new instance of SignalRClientPublisher
@@ -30,6 +46,11 @@ public class SignalRClientPublisher : ITransportPublisher
 
         // Register the message handler
         _hubConnection.On<TransportMessage>("ReceiveMessage", HandleMessageReceived);
+
+        // Map the underlying hub connection lifecycle onto the published connection state.
+        _hubConnection.Reconnecting += OnReconnecting;
+        _hubConnection.Reconnected += OnReconnected;
+        _hubConnection.Closed += OnClosed;
     }
 
     /// <summary>
@@ -45,7 +66,18 @@ public class SignalRClientPublisher : ITransportPublisher
 
         if (_hubConnection.State == HubConnectionState.Disconnected)
         {
-            await _hubConnection.StartAsync();
+            SetConnectionState(TransportConnectionState.Connecting);
+            try
+            {
+                await _hubConnection.StartAsync();
+            }
+            catch
+            {
+                SetConnectionState(TransportConnectionState.Disconnected);
+                throw;
+            }
+
+            SetConnectionState(TransportConnectionState.Connected);
         }
     }
 
@@ -109,6 +141,61 @@ public class SignalRClientPublisher : ITransportPublisher
         NotifySubscribers(message);
     }
 
+    private void SetConnectionState(TransportConnectionState state)
+    {
+        if (_connectionState == state)
+        {
+            return;
+        }
+
+        _connectionState = state;
+        RaiseConnectionStateChanged(state);
+    }
+
+    /// <summary>
+    /// Raises <see cref="ConnectionStateChanged"/> defensively, so one failing handler cannot
+    /// prevent other handlers from being notified or break the caller's lifecycle transitions.
+    /// </summary>
+    private void RaiseConnectionStateChanged(TransportConnectionState state)
+    {
+        var handlers = ConnectionStateChanged;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((Action<TransportConnectionState>)handler)(state);
+            }
+            catch (Exception ex)
+            {
+                // Log the exception in a real application
+                Console.WriteLine($"Error notifying connection-state subscriber: {ex}");
+            }
+        }
+    }
+
+    private Task OnReconnecting(Exception? exception)
+    {
+        SetConnectionState(TransportConnectionState.Reconnecting);
+        return Task.CompletedTask;
+    }
+
+    private Task OnReconnected(string? connectionId)
+    {
+        SetConnectionState(TransportConnectionState.Connected);
+        return Task.CompletedTask;
+    }
+
+    private Task OnClosed(Exception? exception)
+    {
+        SetConnectionState(TransportConnectionState.Closed);
+        return Task.CompletedTask;
+    }
+
     private void NotifySubscribers(TransportMessage message)
     {
         // Get a snapshot of the current subscribers
@@ -153,6 +240,10 @@ public class SignalRClientPublisher : ITransportPublisher
 
         // Dispose the connection
         await _hubConnection.DisposeAsync();
+
+        // Guarantee the terminal transition: a never-started connection does not raise the
+        // Closed callback, but a disposed publisher is always closed.
+        SetConnectionState(TransportConnectionState.Closed);
 
         GC.SuppressFinalize(this);
     }

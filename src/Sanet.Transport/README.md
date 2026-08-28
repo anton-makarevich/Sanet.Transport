@@ -11,9 +11,46 @@ Sanet.Transport provides the core interfaces and message definitions for a simpl
 ## Key Components
 
 - **ITransportPublisher**: Core interface for publishing and subscribing to messages
+- **TransportConnectionState**: Describes the connectivity state of a transport connection
 - **IPublisherFactory**: Creates transport publishers from transport-specific options
 - **PublisherOptions**: Marker base type for transport-specific publisher options
 - **TransportMessage**: Standard message format for all transport implementations
+
+## Connection State
+
+Every `ITransportPublisher` exposes:
+
+- `TransportConnectionState ConnectionState` - the current connectivity state
+- `event Action<TransportConnectionState>? ConnectionStateChanged` - raised on every connection-state transition
+
+The states are:
+
+- `Connecting` - the connection is being established
+- `Connected` - the connection is established and operational
+- `Reconnecting` - the connection was lost and is being re-established (non-terminal)
+- `Disconnected` - the connection is not active (non-terminal)
+- `Closed` - the connection has been closed (**terminal**, a new publisher must be created)
+
+The event reports transport connectivity only — it is **not** raised when peers or hosts join or leave a room. Implementations report these states differently; see the package-specific READMEs for the exact mapping.
+
+```csharp
+publisher.ConnectionStateChanged += state =>
+{
+    switch (state)
+    {
+        case TransportConnectionState.Closed:
+            // Terminal - recreate the publisher before continuing
+            break;
+        case TransportConnectionState.Disconnected:
+        case TransportConnectionState.Reconnecting:
+            // Transient - disable sending, show a reconnecting indicator
+            break;
+        case TransportConnectionState.Connected:
+            // Re-enable sending
+            break;
+    }
+};
+```
 
 ## Basic Usage
 

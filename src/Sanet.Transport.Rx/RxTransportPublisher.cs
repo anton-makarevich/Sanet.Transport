@@ -11,7 +11,20 @@ public class RxTransportPublisher : ITransportPublisher
 {
     private readonly Subject<TransportMessage> _messageSubject = new();
     private readonly IScheduler _scheduler;
+    private TransportConnectionState _connectionState = TransportConnectionState.Connected;
     private bool _isDisposed;
+
+    /// <summary>
+    /// Gets the current transport connection state. The Rx publisher reports
+    /// <see cref="TransportConnectionState.Connected"/> from construction until it is disposed.
+    /// </summary>
+    public TransportConnectionState ConnectionState => _connectionState;
+
+    /// <summary>
+    /// Event raised on every transport connection-state transition. Raised once with
+    /// <see cref="TransportConnectionState.Closed"/> when the publisher is disposed.
+    /// </summary>
+    public event Action<TransportConnectionState>? ConnectionStateChanged;
 
     public RxTransportPublisher(IScheduler? scheduler = null)
     {
@@ -63,6 +76,9 @@ public class RxTransportPublisher : ITransportPublisher
 
         _isDisposed = true;
         _messageSubject.Dispose();
+
+        _connectionState = TransportConnectionState.Closed;
+        ConnectionStateChanged?.Invoke(TransportConnectionState.Closed);
 
         GC.SuppressFinalize(this);
         return ValueTask.CompletedTask;

@@ -137,4 +137,62 @@ public class RxTransportPublisherTests
         // Act & Assert
         Should.Throw<ObjectDisposedException>(() => publisher.Subscribe(_ => { }));
     }
+
+    [Fact]
+    public void ConnectionState_AfterConstruction_IsConnected()
+    {
+        // Arrange & Act
+        var publisher = new RxTransportPublisher();
+
+        // Assert
+        publisher.ConnectionState.ShouldBe(TransportConnectionState.Connected);
+    }
+
+    [Fact]
+    public async Task ConnectionState_AfterDispose_IsClosed()
+    {
+        // Arrange
+        var publisher = new RxTransportPublisher();
+
+        // Act
+        await publisher.DisposeAsync();
+
+        // Assert
+        publisher.ConnectionState.ShouldBe(TransportConnectionState.Closed);
+    }
+
+    [Fact]
+    public async Task ConnectionStateChanged_AfterDispose_FiresOnceWithClosed()
+    {
+        // Arrange
+        var publisher = new RxTransportPublisher();
+        var states = new List<TransportConnectionState>();
+        publisher.ConnectionStateChanged += states.Add;
+
+        // Act
+        await publisher.DisposeAsync();
+        await publisher.DisposeAsync();
+
+        // Assert
+        states.ShouldBe([TransportConnectionState.Closed]);
+    }
+
+    [Fact]
+    public async Task ConnectionStateChanged_IsNotFiredForMessageActivity()
+    {
+        // Arrange
+        var publisher = new RxTransportPublisher(ImmediateScheduler.Instance);
+        var states = new List<TransportConnectionState>();
+        publisher.ConnectionStateChanged += states.Add;
+
+        // Act
+        await publisher.PublishMessage(new TransportMessage
+        {
+            MessageType = "TestCommand",
+            SourceId = Guid.NewGuid()
+        });
+
+        // Assert - message activity must not affect transport connectivity
+        states.ShouldBeEmpty();
+    }
 }

@@ -10,7 +10,22 @@ public class SignalRServerPublisher : ITransportPublisher, IDisposable
 {
     private readonly IHubContext<TransportHub> _hubContext;
     private readonly List<Action<TransportMessage>> _subscribers = new List<Action<TransportMessage>>();
+    private TransportConnectionState _connectionState = TransportConnectionState.Connected;
     private bool _isDisposed;
+
+    /// <summary>
+    /// Gets the current transport connection state. Reports
+    /// <see cref="TransportConnectionState.Connected"/> while the host publisher is active and
+    /// <see cref="TransportConnectionState.Closed"/> after it is disposed. This value means the
+    /// host publisher is running — it does not indicate that any client is attached.
+    /// </summary>
+    public TransportConnectionState ConnectionState => _connectionState;
+
+    /// <summary>
+    /// Event raised on every transport connection-state transition. Raised once with
+    /// <see cref="TransportConnectionState.Closed"/> when the publisher is disposed.
+    /// </summary>
+    public event Action<TransportConnectionState>? ConnectionStateChanged;
 
     /// <summary>
     /// Creates a new instance of SignalRServerPublisher
@@ -114,10 +129,39 @@ public class SignalRServerPublisher : ITransportPublisher, IDisposable
         
         _isDisposed = true;
         
+        _connectionState = TransportConnectionState.Closed;
+        RaiseConnectionStateChanged(TransportConnectionState.Closed);
+
         // Unsubscribe from the hub's message event
         TransportHub.MessageReceived -= HandleMessageReceived;
         
         GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Raises <see cref="ConnectionStateChanged"/> defensively, so one failing handler cannot
+    /// prevent other handlers from being notified or break the caller's cleanup.
+    /// </summary>
+    private void RaiseConnectionStateChanged(TransportConnectionState state)
+    {
+        var handlers = ConnectionStateChanged;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((Action<TransportConnectionState>)handler)(state);
+            }
+            catch (Exception ex)
+            {
+                // Log the exception in a real application
+                Console.WriteLine($"Error notifying connection-state subscriber: {ex}");
+            }
+        }
     }
 
     /// <summary>

@@ -46,6 +46,12 @@ publisher.PublishMessage(new TransportMessage {
 });
 ```
 
+## Connection State
+
+`ConnectionState` is `Connected` from construction until the publisher is disposed, at which
+point it becomes `Closed` and `ConnectionStateChanged` fires once. Message activity never
+changes the reported state.
+
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.

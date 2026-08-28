@@ -324,4 +324,63 @@ public class ChannelTransportPublisherTests
         await Task.Delay(100);
         subscriber4Received.ShouldBeTrue("Subsequent messages should still be processed after a subscriber exception.");
     }
+
+    [Fact]
+    public void ConnectionState_AfterConstruction_IsConnected()
+    {
+        // Arrange & Act
+        var publisher = new ChannelTransportPublisher();
+
+        // Assert
+        publisher.ConnectionState.ShouldBe(TransportConnectionState.Connected);
+    }
+
+    [Fact]
+    public void ConnectionState_AfterDispose_IsClosed()
+    {
+        // Arrange
+        var publisher = new ChannelTransportPublisher();
+
+        // Act
+        publisher.Dispose();
+
+        // Assert
+        publisher.ConnectionState.ShouldBe(TransportConnectionState.Closed);
+    }
+
+    [Fact]
+    public void ConnectionStateChanged_AfterDispose_FiresOnceWithClosed()
+    {
+        // Arrange
+        var publisher = new ChannelTransportPublisher();
+        var states = new List<TransportConnectionState>();
+        publisher.ConnectionStateChanged += states.Add;
+
+        // Act
+        publisher.Dispose();
+        publisher.Dispose();
+
+        // Assert
+        states.ShouldBe([TransportConnectionState.Closed]);
+    }
+
+    [Fact]
+    public async Task ConnectionStateChanged_IsNotFiredForMessageActivity()
+    {
+        // Arrange
+        var publisher = new ChannelTransportPublisher();
+        var states = new List<TransportConnectionState>();
+        publisher.ConnectionStateChanged += states.Add;
+
+        // Act
+        await publisher.PublishMessage(new TransportMessage
+        {
+            MessageType = "TestCommand",
+            SourceId = Guid.NewGuid()
+        });
+        await Task.Delay(100);
+
+        // Assert - message activity must not affect transport connectivity
+        states.ShouldBeEmpty();
+    }
 }

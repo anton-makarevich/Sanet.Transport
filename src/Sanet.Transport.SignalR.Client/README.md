@@ -170,6 +170,39 @@ Semantics:
   `InvalidOperationException("Relay client is not connected.")`; it now throws
   `TransportPublishException(PublishFailureReason.NotConnected)`.
 
+### 4. Connection state
+
+Both publishers implement `ITransportPublisher.ConnectionState` (a `TransportConnectionState`)
+and raise `ConnectionStateChanged` on every transition. This state tracks **transport
+connectivity only** — it is not raised when peers or the host join or leave the room (use the
+room events `PeerConnected`, `PeerDisconnected`, `HostDisconnected` for that).
+
+`SignalRClientPublisher` (LAN) mapping to the underlying `HubConnectionState`:
+
+| TransportConnectionState | When reported |
+| --- | --- |
+| `Disconnected` | before `StartAsync` |
+| `Connecting` | while `StartAsync` is establishing the connection |
+| `Connected` | after the connection is established (and again after an automatic reconnect) |
+| `Reconnecting` | while the connection is being re-established after an unexpected drop |
+| `Closed` | after the connection is stopped/disposed |
+
+`RelayClientPublisher` mapping:
+
+| TransportConnectionState | When reported |
+| --- | --- |
+| `Connected` | after start completes, and again after every recovery |
+| `Reconnecting` | while the underlying connection is in the ticket-expiry auto-reconnect window |
+| `Disconnected` | while idle or parked during a ticket-refresh rebuild |
+| `Closed` | **terminal** — the drop could not be recovered (no window / no refresh), the refresh delegate failed or returned null, or the publisher was disposed |
+
+`Closed` is terminal for both publishers: after it is raised the publisher cannot reconnect,
+so callers must construct a new publisher (fetch a fresh relay ticket for the relay variant)
+before continuing.
+
+**Breaking change**: `ITransportPublisher` now declares `ConnectionState` and
+`ConnectionStateChanged`; custom implementations must add them to compile against this version.
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](../../LICENSE) file for details.
