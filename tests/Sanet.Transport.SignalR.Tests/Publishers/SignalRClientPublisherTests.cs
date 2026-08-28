@@ -136,8 +136,12 @@ public class SignalRClientPublisherTests
         await WaitUntilAsync(() => states.Contains(TransportConnectionState.Connected));
 
         // The hub aborts the first connection shortly after connect, triggering automatic
-        // reconnect. Verify the visual state tracks the drop and the recovery.
+        // reconnect. Verify the visual state tracks the drop and the recovery. Wait for the
+        // state to drop to Reconnecting and then recover to Connected again before asserting,
+        // since there is a window after Reconnecting appears during which the reconnect has
+        // not yet completed.
         await WaitUntilAsync(() => states.Contains(TransportConnectionState.Reconnecting));
+        await WaitUntilAsync(() => states.Count(s => s == TransportConnectionState.Connected) >= 2);
 
         // Assert
         states.ShouldContain(TransportConnectionState.Connected);
