@@ -152,8 +152,9 @@ public class SignalRClientPublisherTests
     [Fact]
     public async Task ConnectionState_WhenStartFails_IsDisconnectedAndEventRaised()
     {
-        // A port that is guaranteed to have no listener causes the connection attempt to fail.
-        const string hubUrl = "http://127.0.0.1:9/hubs/lan";
+        // 192.0.2.1 is TEST-NET-1 (RFC 5737) and guaranteed unroutable, so the
+        // connection attempt fails deterministically without depending on port availability.
+        const string hubUrl = "http://192.0.2.1/hubs/lan";
         await using var publisher = new SignalRClientPublisher(hubUrl);
         var states = new List<TransportConnectionState>();
         publisher.ConnectionStateChanged += states.Add;
