@@ -6,10 +6,14 @@ on:
       - main
     paths:
       - 'src/Sanet.Transport.SignalR.Hub/**'
+      - 'Directory.Build.props'
+      - 'global.json'
       - '.github/workflows/hub-docker.yml'
   pull_request:
     paths:
       - 'src/Sanet.Transport.SignalR.Hub/**'
+      - 'Directory.Build.props'
+      - 'global.json'
       - '.github/workflows/hub-docker.yml'
   workflow_dispatch:
 
