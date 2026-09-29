@@ -378,7 +378,8 @@ public class RelayRpcTests
         Guid gameId)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/rooms");
-        request.Content = JsonContent.Create(new CreateRoomRequest(gameId));
+        request.Content = JsonContent.Create(new CreateRoomRequest(
+            new RoomGameInfo(gameId, "MakaMek", "v0.64.0")));
         request.Headers.Add(ApiKeyAuthenticationDefaults.HeaderName, HubApplicationFactory.ApiKey);
         return await client.SendAsync(request);
     }

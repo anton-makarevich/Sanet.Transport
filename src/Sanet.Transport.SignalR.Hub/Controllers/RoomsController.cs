@@ -17,15 +17,11 @@ public sealed class RoomsController(
 {
     [HttpPost]
     [ProducesResponseType<CreateRoomResponse>(StatusCodes.Status201Created)]
+    [ProducesResponseType<CreateRoomResponse>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<CreateRoomResponse>(StatusCodes.Status503ServiceUnavailable)]
     public ActionResult<CreateRoomResponse> CreateRoom([FromBody] CreateRoomRequest request)
     {
-        var validationErrors = new Dictionary<string, string[]>();
-
-        if (request.HostGameId == Guid.Empty)
-        {
-            validationErrors[nameof(request.HostGameId)] = ["HostGameId must be a non-empty GUID."];
-        }
+        var validationErrors = RoomGameInfoValidator.Validate(request.GameInfo);
 
         if (validationErrors.Count > 0)
         {
@@ -35,20 +31,22 @@ public sealed class RoomsController(
             return ValidationProblem(new ValidationProblemDetails(validationErrors));
         }
 
-        var creation = roomManager.CreateRoom(request.HostGameId);
+        var gameInfo = request.GameInfo;
+        var creation = roomManager.CreateRoom(gameInfo);
 
         if (creation.Outcome == RoomCreationOutcome.HubAtCapacity)
         {
             logger.LogWarning(
-                "Create-room request for game {GameId} rejected: relay at capacity",
-                request.HostGameId);
+                "Create-room request for game {GameId} (host instance {HostGameInstanceId}) rejected: relay at capacity",
+                gameInfo.Id,
+                gameInfo.HostId);
             return StatusCode(
                 StatusCodes.Status503ServiceUnavailable,
                 new CreateRoomResponse(
                     Success: false,
                     RoomCode: null,
                     DeviceSessionId: null,
-                    HostGameId: null,
+                    GameInfo: null,
                     SessionToken: null,
                     ExpiresAt: null,
                     Error: new HubError(
@@ -61,8 +59,9 @@ public sealed class RoomsController(
         var session = creation.Session!;
 
         logger.LogInformation(
-            "Create-room request for game {GameId} succeeded: room {RoomCode}",
-            request.HostGameId,
+            "Create-room request for game {GameId} (host instance {HostGameInstanceId}) succeeded: room {RoomCode}",
+            gameInfo.Id,
+            gameInfo.HostId,
             room.RoomCode);
 
         return Created(
@@ -71,7 +70,7 @@ public sealed class RoomsController(
                 Success: true,
                 RoomCode: room.RoomCode,
                 DeviceSessionId: session.DeviceSessionId,
-                HostGameId: room.HostGameId,
+                GameInfo: room.GameInfo,
                 SessionToken: session.Token,
                 ExpiresAt: room.ExpiresAt,
                 Error: null));
@@ -110,7 +109,7 @@ public sealed class RoomsController(
             Success: true,
             Role: result.Session!.Role.ToString(),
             DeviceSessionId: result.Session.DeviceSessionId,
-            HostGameId: result.Room!.HostGameId,
+            GameInfo: result.Room!.GameInfo,
             SessionToken: result.Session.Token,
             Error: null);
     }
@@ -134,7 +133,7 @@ public sealed class RoomsController(
             Success: false,
             Role: null,
             DeviceSessionId: null,
-            HostGameId: null,
+            GameInfo: null,
             SessionToken: null,
             Error: new HubError(errorCode, message));
     }

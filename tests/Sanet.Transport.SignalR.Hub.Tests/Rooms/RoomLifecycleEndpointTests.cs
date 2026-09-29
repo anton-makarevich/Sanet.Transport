@@ -40,7 +40,7 @@ public class RoomLifecycleEndpointTests
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
-        using var createResponse = await RoomApiClient.CreateRoom(client, Guid.NewGuid());
+        using var createResponse = await RoomApiClient.CreateRoom(client, RoomApiClient.CreateGameInfo());
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
 
@@ -164,7 +164,7 @@ public class RoomLifecycleEndpointTests
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
-        using var createResponse = await RoomApiClient.CreateRoom(client, Guid.NewGuid());
+        using var createResponse = await RoomApiClient.CreateRoom(client, RoomApiClient.CreateGameInfo());
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
         var hostDeviceSessionId = createResult.DeviceSessionId!.Value;
@@ -346,25 +346,26 @@ public class RoomLifecycleEndpointTests
     }
 
     [Fact]
-    public async Task CreateRoom_EmptyGameId_ReturnsValidationProblem()
+    public async Task CreateRoom_EmptyGameInfoHostId_ReturnsValidationProblem()
     {
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/rooms");
-        request.Content = JsonContent.Create(new CreateRoomRequest(Guid.Empty));
+        request.Content = JsonContent.Create(
+            new CreateRoomRequest(new RoomGameInfo(Guid.Empty, "MakaMek", "v0.64.0")));
         request.Headers.Add(ApiKeyAuthenticationDefaults.HeaderName, HubApplicationFactory.ApiKey);
 
         using var response = await client.SendAsync(request);
 
         response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         var body = await response.Content.ReadAsStringAsync();
-        body.ShouldContain("GameId");
+        body.ShouldContain("GameInfo.HostId");
     }
 
     private static async Task<(string RoomCode, string HostToken)> CreateReadyRoomAsync(HttpClient client)
     {
-        using var createResponse = await RoomApiClient.CreateRoom(client, Guid.NewGuid());
+        using var createResponse = await RoomApiClient.CreateRoom(client, RoomApiClient.CreateGameInfo());
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
         await RoomApiClient.MarkReady(client, roomCode, createResult.SessionToken!);

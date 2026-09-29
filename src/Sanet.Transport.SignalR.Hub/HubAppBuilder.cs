@@ -90,6 +90,8 @@ public static class HubAppBuilder
                 $"{HubOptions.SectionName}:SignalR:ClientTimeoutIntervalSeconds must be at least twice KeepAliveIntervalSeconds.")
             .ValidateOnStart();
 
+        // No DictionaryKeyPolicy is configured: room game metadata keys are host-supplied and
+        // must keep their original case so the room list filters match them exactly.
         builder.Services
             .AddControllers()
             .AddJsonOptions(jsonOptions =>
@@ -129,7 +131,7 @@ public static class HubAppBuilder
                         Success: false,
                         Role: null,
                         DeviceSessionId: null,
-                        HostGameId: null,
+                        GameInfo: null,
                         SessionToken: null,
                         Error: new HubError(HubErrorCode.RateLimited, "Too many join attempts. Please try again later.")),
                     cancellationToken);

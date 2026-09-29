@@ -75,6 +75,38 @@ The container listens on `http://localhost:8080` in `Production` mode.
 | DELETE | `/api/rooms/{roomCode}/members/{playerId}` | Remove a member (requires `X-Api-Key` + `Session-Token` header, host only) |
 | WebSocket | `/hubs/relay` | SignalR hub for message relay (requires `sessionToken` query parameter) |
 
+## Creating A Room
+
+`POST /api/rooms` requires a `gameInfo` object identifying the game the room belongs to. One Hub
+serves many games, so the host declares its game and the Hub echoes that identity back to every
+client that joins.
+
+```json
+{
+  "gameInfo": {
+    "hostId": "3f8a2c14-9b6d-4f2e-8a71-5c0d3b9e7f21",
+    "id": "MakaMek",
+    "version": "v0.64.0",
+    "metadata": {
+      "rules": "standard",
+      "techLevel": "introductory"
+    }
+  }
+}
+```
+
+| Field | Required | Rules |
+|-------|----------|-------|
+| `hostId` | yes | Non-empty GUID identifying this host game instance. |
+| `id` | yes | Game title, 1–64 characters of letters, digits, `.`, `_` or `-`. |
+| `version` | yes | Game version, 1–32 characters with no control characters or surrounding whitespace. |
+| `metadata` | no | Game-specific attributes. Omit it, or send at most 32 entries with keys of up to 64 and values of up to 512 characters. Keys are case-sensitive and stored exactly as sent. |
+
+The create response carries the same `gameInfo` back, and `POST /api/rooms/{roomCode}/join` returns it
+as well, so a joiner learns the game before it starts connecting. A request that violates a rule is
+rejected with `400` and a `ValidationProblemDetails` body whose `errors` keys name the offending
+field, for example `GameInfo.Id`.
+
 ## Connecting Clients
 
 The API key (`X-Api-Key` header) is used **only** by the `/api/*` REST endpoints. The `/hubs/relay` WebSocket endpoint does not accept the API key; it requires a per-session `sessionToken` query parameter instead.

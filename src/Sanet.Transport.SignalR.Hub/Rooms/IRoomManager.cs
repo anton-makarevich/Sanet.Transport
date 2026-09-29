@@ -1,3 +1,5 @@
+using Sanet.Transport.Relay.Contracts;
+
 namespace Sanet.Transport.SignalR.Hub.Rooms;
 
 /// <summary>
@@ -6,7 +8,12 @@ namespace Sanet.Transport.SignalR.Hub.Rooms;
 /// </summary>
 public interface IRoomManager
 {
-    RoomCreationResult CreateRoom(Guid hostGameId);
+    /// <summary>
+    /// Creates a room for the supplied game identity and attributes. Throws
+    /// <see cref="ArgumentException"/> when <paramref name="gameInfo"/> violates
+    /// <see cref="RoomGameInfoLimits"/>.
+    /// </summary>
+    RoomCreationResult CreateRoom(RoomGameInfo gameInfo);
     RoomJoinResult JoinRoom(string roomCode, string? sessionToken);
     RoomReadyResult MarkRoomReady(string roomCode, string sessionToken);
     RoomLockResult LockRoom(string roomCode, string sessionToken);

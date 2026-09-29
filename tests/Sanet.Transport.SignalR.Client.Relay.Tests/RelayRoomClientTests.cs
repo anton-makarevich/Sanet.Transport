@@ -4,7 +4,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
-using Sanet.Transport.SignalR.Client.Relay;
 using Sanet.Transport.Relay.Contracts;
 using Shouldly;
 
@@ -51,6 +50,45 @@ public class RelayRoomClientTests
     private const string SessionToken = "test-session-token-secret-value";
     private static readonly Guid HostDeviceSessionId = Guid.Parse("99999999-9999-9999-9999-999999999999");
     private static readonly Guid ClientDeviceSessionId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    private static readonly Guid HostId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private static readonly string CreateResponseSuccess = """
+        {
+          "success": true,
+          "roomCode": "ABCDEF",
+          "deviceSessionId": "99999999-9999-9999-9999-999999999999",
+          "gameInfo": {
+            "hostId": "11111111-1111-1111-1111-111111111111",
+            "id": "MakaMek",
+            "version": "v0.64.0"
+          },
+          "sessionToken": "test-session-token-secret-value",
+          "expiresAt": "2026-07-30T22:00:00Z",
+          "error": null
+        }
+        """;
+
+    private static readonly string JoinResponseSuccess = """
+        {
+          "success": true,
+          "role": "Client",
+          "deviceSessionId": "22222222-2222-2222-2222-222222222222",
+          "gameInfo": {
+            "hostId": "11111111-1111-1111-1111-111111111111",
+            "id": "MakaMek",
+            "version": "v0.64.0"
+          },
+          "sessionToken": "test-session-token-secret-value",
+          "error": null
+        }
+        """;
+
+    private static RoomGameInfo CreateGameInfo(
+        Guid? hostId = null,
+        string id = "MakaMek",
+        string version = "v0.64.0",
+        IReadOnlyDictionary<string, string>? metadata = null) =>
+        new(hostId ?? Guid.NewGuid(), id, version, metadata);
+
 
     private readonly RecordingHttpMessageHandler _handler = new();
     private readonly ILogger<RelayRoomClient> _logger = Substitute.For<ILogger<RelayRoomClient>>();
@@ -71,28 +109,22 @@ public class RelayRoomClientTests
     [Fact]
     public async Task CreateAsync_Success_PreservesRoomIdentityAndSendsApiKey()
     {
-        var hostGameId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var gameInfo = CreateGameInfo(HostId);
         _handler.StatusCode = HttpStatusCode.Created;
-        _handler.ResponseContent = """
-            {
-              "success": true,
-              "roomCode": "ABCDEF",
-              "deviceSessionId": "99999999-9999-9999-9999-999999999999",
-              "hostGameId": "11111111-1111-1111-1111-111111111111",
-              "sessionToken": "test-session-token-secret-value",
-              "expiresAt": "2026-07-30T22:00:00Z",
-              "error": null
-            }
-            """;
+        _handler.ResponseContent = CreateResponseSuccess;
 
-        var result = await _sut.Create(hostGameId);
+        var result = await _sut.Create(gameInfo);
 
         result.Success.ShouldBeTrue();
         result.RoomCode.ShouldBe("ABCDEF");
         result.SessionToken.ShouldBe(SessionToken);
         result.Role.ShouldBe("Host");
         result.DeviceSessionId.ShouldBe(HostDeviceSessionId);
-        result.HostGameId.ShouldBe(hostGameId);
+        result.GameInfo.ShouldNotBeNull();
+        result.GameInfo!.HostId.ShouldBe(HostId);
+        result.GameInfo.Id.ShouldBe("MakaMek");
+        result.GameInfo.Version.ShouldBe("v0.64.0");
+        result.GameInfo.Metadata.ShouldBeNull();
         result.Error.ShouldBeNull();
 
         _handler.LastRequest.ShouldNotBeNull();
@@ -103,27 +135,71 @@ public class RelayRoomClientTests
         _handler.LastRequestBody.ShouldNotBeNull();
         using (var doc = JsonDocument.Parse(_handler.LastRequestBody!))
         {
-            doc.RootElement.GetProperty("hostGameId").GetGuid().ShouldBe(hostGameId);
+            var sentGameInfo = doc.RootElement.GetProperty("gameInfo");
+            sentGameInfo.GetProperty("hostId").GetGuid().ShouldBe(HostId);
+            sentGameInfo.GetProperty("id").GetString().ShouldBe("MakaMek");
+            sentGameInfo.GetProperty("version").GetString().ShouldBe("v0.64.0");
+            sentGameInfo.TryGetProperty("metadata", out _).ShouldBeFalse();
         }
 
         AssertNoSecretsLeaked(result.Error?.Message);
     }
 
     [Fact]
-    public async Task JoinAsync_Success_PreservesRoomIdentityAndSendsApiKey()
+    public async Task CreateAsync_WithMetadata_SendsAndPreservesMetadataKeyCasing()
     {
-        var hostGameId = Guid.Parse("11111111-1111-1111-1111-111111111111");
-        _handler.StatusCode = HttpStatusCode.OK;
+        _handler.StatusCode = HttpStatusCode.Created;
         _handler.ResponseContent = """
             {
               "success": true,
-              "role": "Client",
-              "deviceSessionId": "22222222-2222-2222-2222-222222222222",
-              "hostGameId": "11111111-1111-1111-1111-111111111111",
+              "roomCode": "ABCDEF",
+              "deviceSessionId": "99999999-9999-9999-9999-999999999999",
+              "gameInfo": {
+                "hostId": "11111111-1111-1111-1111-111111111111",
+                "id": "MakaMek",
+                "version": "v0.64.0",
+                "metadata": {
+                  "rules": "standard",
+                  "techLevel": "introductory"
+                }
+              },
               "sessionToken": "test-session-token-secret-value",
+              "expiresAt": "2026-07-30T22:00:00Z",
               "error": null
             }
             """;
+        var metadata = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["rules"] = "standard",
+            ["techLevel"] = "introductory"
+        };
+
+        var result = await _sut.Create(CreateGameInfo(HostId, metadata: metadata));
+
+        result.Success.ShouldBeTrue();
+        result.GameInfo.ShouldNotBeNull();
+        result.GameInfo!.Metadata.ShouldNotBeNull();
+        result.GameInfo.Metadata!["rules"].ShouldBe("standard");
+        result.GameInfo.Metadata.ContainsKey("techLevel").ShouldBeTrue();
+        result.GameInfo.Metadata.ContainsKey("techlevel").ShouldBeFalse();
+
+        using var doc = JsonDocument.Parse(_handler.LastRequestBody!);
+        var sentMetadata = doc.RootElement.GetProperty("gameInfo").GetProperty("metadata");
+        sentMetadata.TryGetProperty("techLevel", out _).ShouldBeTrue();
+        sentMetadata.TryGetProperty("techlevel", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithNullGameInfo_FailsBeforeSendingRequest()
+    {
+        await Should.ThrowAsync<ArgumentNullException>(() => _sut.Create(null!));
+    }
+
+    [Fact]
+    public async Task JoinAsync_Success_PreservesRoomIdentityAndSendsApiKey()
+    {
+        _handler.StatusCode = HttpStatusCode.OK;
+        _handler.ResponseContent = JoinResponseSuccess;
 
         var result = await _sut.Join("ABCDEF", sessionToken: null);
 
@@ -132,7 +208,10 @@ public class RelayRoomClientTests
         result.SessionToken.ShouldBe(SessionToken);
         result.Role.ShouldBe("Client");
         result.DeviceSessionId.ShouldBe(ClientDeviceSessionId);
-        result.HostGameId.ShouldBe(hostGameId);
+        result.GameInfo.ShouldNotBeNull();
+        result.GameInfo!.HostId.ShouldBe(HostId);
+        result.GameInfo.Id.ShouldBe("MakaMek");
+        result.GameInfo.Version.ShouldBe("v0.64.0");
         result.Error.ShouldBeNull();
 
         _handler.LastRequest.ShouldNotBeNull();
@@ -151,16 +230,7 @@ public class RelayRoomClientTests
         var provider = Substitute.For<IRelayHubConfigurationProvider>();
         var client = new RelayRoomClient(new HttpClient(_handler), provider, _logger);
         _handler.StatusCode = HttpStatusCode.OK;
-        _handler.ResponseContent = """
-            {
-              "success": true,
-              "role": "Client",
-              "deviceSessionId": "22222222-2222-2222-2222-222222222222",
-              "hostGameId": "11111111-1111-1111-1111-111111111111",
-              "sessionToken": "test-session-token-secret-value",
-              "error": null
-            }
-            """;
+        _handler.ResponseContent = JoinResponseSuccess;
 
         // Act
         var result = await client.Join(
@@ -300,18 +370,8 @@ public class RelayRoomClientTests
 
         // Act - the created room uses the initial configuration
         _handler.StatusCode = HttpStatusCode.Created;
-        _handler.ResponseContent = """
-            {
-              "success": true,
-              "roomCode": "ABCDEF",
-              "deviceSessionId": "99999999-9999-9999-9999-999999999999",
-              "hostGameId": "11111111-1111-1111-1111-111111111111",
-              "sessionToken": "test-session-token-secret-value",
-              "expiresAt": "2026-07-30T22:00:00Z",
-              "error": null
-            }
-            """;
-        var createResult = await client.Create(Guid.NewGuid());
+        _handler.ResponseContent = CreateResponseSuccess;
+        var createResult = await client.Create(CreateGameInfo());
         createResult.Success.ShouldBeTrue();
         _handler.LastRequest.ShouldNotBeNull();
         _handler.LastRequest!.RequestUri!.ToString().ShouldBe("https://first.example/api/rooms");
@@ -388,7 +448,7 @@ public class RelayRoomClientTests
               "success": false,
               "role": null,
               "deviceSessionId": null,
-              "hostGameId": null,
+              "gameInfo": null,
               "sessionToken": null,
               "error": { "code": "{{hubCode}}", "message": "Hub says {{hubCode}}." }
             }
@@ -412,7 +472,7 @@ public class RelayRoomClientTests
               "success": false,
               "roomCode": null,
               "deviceSessionId": null,
-              "hostGameId": null,
+              "gameInfo": null,
               "sessionToken": null,
               "expiresAt": null,
               "error": {
@@ -423,7 +483,7 @@ public class RelayRoomClientTests
             }
             """;
 
-        var result = await _sut.Create(Guid.NewGuid());
+        var result = await _sut.Create(CreateGameInfo());
 
         result.Success.ShouldBeFalse();
         result.Error!.Code.ShouldBe(RelayClientErrorCode.HubAtCapacity);
@@ -437,7 +497,7 @@ public class RelayRoomClientTests
         _handler.ResponseContent = string.Empty;
         _handler.ContentType = "text/plain";
 
-        var result = await _sut.Create(Guid.NewGuid());
+        var result = await _sut.Create(CreateGameInfo());
 
         result.Success.ShouldBeFalse();
         result.Error!.Code.ShouldBe(RelayClientErrorCode.Unauthorized);
@@ -538,7 +598,7 @@ public class RelayRoomClientTests
     {
         _handler.ThrowException = new HttpRequestException("connection refused");
 
-        var result = await _sut.Create(Guid.NewGuid());
+        var result = await _sut.Create(CreateGameInfo());
 
         result.Success.ShouldBeFalse();
         result.Error!.Code.ShouldBe(RelayClientErrorCode.NetworkError);
@@ -550,7 +610,7 @@ public class RelayRoomClientTests
     {
         _handler.ThrowException = new TaskCanceledException("timed out");
 
-        var result = await _sut.Create(Guid.NewGuid());
+        var result = await _sut.Create(CreateGameInfo());
 
         result.Success.ShouldBeFalse();
         result.Error!.Code.ShouldBe(RelayClientErrorCode.Timeout);
@@ -563,7 +623,7 @@ public class RelayRoomClientTests
         _handler.StatusCode = HttpStatusCode.Created;
         _handler.ResponseContent = "{ not-json";
 
-        var result = await _sut.Create(Guid.NewGuid());
+        var result = await _sut.Create(CreateGameInfo());
 
         result.Success.ShouldBeFalse();
         result.Error!.Code.ShouldBe(RelayClientErrorCode.DeserializationError);
@@ -586,7 +646,7 @@ public class RelayRoomClientTests
         var client = new RelayRoomClient(new HttpClient(_handler), provider, _logger);
 
         // Act
-        var result = await client.Create(Guid.NewGuid());
+        var result = await client.Create(CreateGameInfo());
 
         // Assert
         result.Success.ShouldBeFalse();
@@ -682,20 +742,10 @@ public class RelayRoomClientTests
         }));
         var client = new RelayRoomClient(new HttpClient(_handler) { BaseAddress = new Uri("http://base.example") }, provider, _logger);
         _handler.StatusCode = HttpStatusCode.Created;
-        _handler.ResponseContent = """
-            {
-              "success": true,
-              "roomCode": "ABCDEF",
-              "deviceSessionId": "99999999-9999-9999-9999-999999999999",
-              "hostGameId": "11111111-1111-1111-1111-111111111111",
-              "sessionToken": "test-session-token-secret-value",
-              "expiresAt": "2026-07-30T22:00:00Z",
-              "error": null
-            }
-            """;
+        _handler.ResponseContent = CreateResponseSuccess;
 
         // Act
-        var result = await client.Create(Guid.NewGuid());
+        var result = await client.Create(CreateGameInfo());
 
         // Assert - a blank base URL is not a configuration error; the relative request resolves against the HttpClient base address
         result.Success.ShouldBeTrue();
@@ -717,7 +767,7 @@ public class RelayRoomClientTests
         var client = new RelayRoomClient(new HttpClient(_handler), provider, _logger);
 
         // Act
-        var result = await client.Create(Guid.NewGuid());
+        var result = await client.Create(CreateGameInfo());
 
         // Assert - a blank base URL with no HttpClient base address cannot escape as InvalidOperationException
         result.Success.ShouldBeFalse();
@@ -1083,7 +1133,7 @@ public class RelayRoomClientTests
         _handler.StatusCode = HttpStatusCode.Created;
         _handler.ResponseContent = string.Empty;
 
-        var result = await _sut.Create(Guid.NewGuid());
+        var result = await _sut.Create(CreateGameInfo());
 
         result.Success.ShouldBeFalse();
         result.Error!.Code.ShouldBe(RelayClientErrorCode.DeserializationError);
@@ -1094,9 +1144,9 @@ public class RelayRoomClientTests
     public async Task CreateAsync_HubErrorNull_MapsToUnknown()
     {
         _handler.StatusCode = HttpStatusCode.InternalServerError;
-        _handler.ResponseContent = """{ "success": false, "roomCode": null, "hostGameId": null, "sessionToken": null, "expiresAt": null, "error": null }""";
+        _handler.ResponseContent = """{ "success": false, "roomCode": null, "deviceSessionId": null, "gameInfo": null, "sessionToken": null, "expiresAt": null, "error": null }""";
 
-        var result = await _sut.Create(Guid.NewGuid());
+        var result = await _sut.Create(CreateGameInfo());
 
         result.Success.ShouldBeFalse();
         result.Error!.Code.ShouldBe(RelayClientErrorCode.Unknown);
@@ -1107,7 +1157,7 @@ public class RelayRoomClientTests
     public async Task JoinAsync_HubErrorNull_MapsToUnknown()
     {
         _handler.StatusCode = HttpStatusCode.InternalServerError;
-        _handler.ResponseContent = """{ "success": false, "role": null, "deviceSessionId": null, "hostGameId": null, "sessionToken": null, "error": null }""";
+        _handler.ResponseContent = """{ "success": false, "role": null, "deviceSessionId": null, "gameInfo": null, "sessionToken": null, "error": null }""";
 
         var result = await _sut.Join("ABCDEF", sessionToken: null);
 
@@ -1163,7 +1213,7 @@ public class RelayRoomClientTests
         var deviceSessionId = Guid.NewGuid();
 
         await Should.ThrowAsync<OperationCanceledException>(() =>
-            _sut.Create(deviceSessionId, cts.Token));
+            _sut.Create(CreateGameInfo(), cts.Token));
 
         await Should.ThrowAsync<OperationCanceledException>(() =>
             _sut.Join("ABCDEF", sessionToken: null, cts.Token));
@@ -1201,7 +1251,7 @@ public class RelayRoomClientTests
     [Fact]
     public void CreateRoomResponse_Deserialization_ParsesExpiresAt()
     {
-        const string json = """{ "success": true, "roomCode": "ABCDEF", "hostGameId": "11111111-1111-1111-1111-111111111111", "sessionToken": "tok", "expiresAt": "2026-07-30T22:00:00Z", "error": null }""";
+        const string json = """{ "success": true, "roomCode": "ABCDEF", "deviceSessionId": "99999999-9999-9999-9999-999999999999", "gameInfo": { "hostId": "11111111-1111-1111-1111-111111111111", "id": "MakaMek", "version": "v0.64.0" }, "sessionToken": "tok", "expiresAt": "2026-07-30T22:00:00Z", "error": null }""";
         var opts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true };
         opts.Converters.Add(new JsonStringEnumConverter());
         var response = JsonSerializer.Deserialize<CreateRoomResponse>(json, opts);
@@ -1238,7 +1288,7 @@ public class RelayRoomClientTests
         var result = await _sut.Health();
 
         result.ShouldNotBeNull();
-        result!.Code.ShouldBe(RelayClientErrorCode.Unknown);
+        result.Code.ShouldBe(RelayClientErrorCode.Unknown);
         result.Message.ShouldContain(((int)statusCode).ToString());
         AssertNoSecretsLeaked(result.Message);
     }
@@ -1251,7 +1301,7 @@ public class RelayRoomClientTests
         var result = await _sut.Health();
 
         result.ShouldNotBeNull();
-        result!.Code.ShouldBe(RelayClientErrorCode.NetworkError);
+        result.Code.ShouldBe(RelayClientErrorCode.NetworkError);
         AssertNoSecretsLeaked(result.Message);
     }
 
@@ -1263,7 +1313,7 @@ public class RelayRoomClientTests
         var result = await _sut.Health();
 
         result.ShouldNotBeNull();
-        result!.Code.ShouldBe(RelayClientErrorCode.Timeout);
+        result.Code.ShouldBe(RelayClientErrorCode.Timeout);
         AssertNoSecretsLeaked(result.Message);
     }
 
@@ -1287,7 +1337,7 @@ public class RelayRoomClientTests
 
         // Assert
         result.ShouldNotBeNull();
-        result!.Code.ShouldBe(RelayClientErrorCode.ConfigurationError);
+        result.Code.ShouldBe(RelayClientErrorCode.ConfigurationError);
         AssertNoSecretsLeaked(result.Message);
     }
 

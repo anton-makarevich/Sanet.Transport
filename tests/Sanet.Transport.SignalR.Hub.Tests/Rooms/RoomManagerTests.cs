@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Sanet.Transport.Relay.Contracts;
 using Sanet.Transport.SignalR.Hub.Configuration;
 using Sanet.Transport.SignalR.Hub.Rooms;
 using Sanet.Transport.SignalR.Hub.Tests.TestLoggers;
@@ -13,24 +14,42 @@ public class RoomManagerTests
     private const int DefaultRoomTtlSeconds = 7200;
     private const int DefaultDissolutionGracePeriodSeconds = 30;
     private const int DefaultRelayTicketTtlSeconds = 60;
+
+    private static RoomGameInfo CreateGameInfo() =>
+        new(Guid.NewGuid(), "MakaMek", "v0.64.0");
+
     [Fact]
     public void CreateRoom_CreatesHostDeviceSessionAndTwoHourExpiry()
     {
         var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
-        var hostGameId = Guid.NewGuid();
+        var gameInfo = new RoomGameInfo(
+            Guid.NewGuid(),
+            "MakaMek",
+            "v0.64.0",
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["rules"] = "standard",
+                ["techLevel"] = "introductory"
+            });
         var manager = CreateManager(
             new SequenceRoomCodeGenerator("ABC234"),
             now: now);
 
-        var result = manager.CreateRoom(hostGameId);
+        var result = manager.CreateRoom(gameInfo);
 
         result.Outcome.ShouldBe(RoomCreationOutcome.Created);
         result.ActiveRoomCount.ShouldBe(1);
         result.Room.ShouldNotBeNull();
         result.Session.ShouldNotBeNull();
         result.Room!.RoomCode.ShouldBe("ABC234");
-        result.Room.HostGameId.ShouldBe(hostGameId);
+        result.Room.GameInfo.HostId.ShouldBe(gameInfo.HostId);
+        result.Room.GameInfo.Id.ShouldBe("MakaMek");
+        result.Room.GameInfo.Version.ShouldBe("v0.64.0");
+        result.Room.GameInfo.Metadata.ShouldNotBeNull();
+        result.Room.GameInfo.Metadata!["rules"].ShouldBe("standard");
+        result.Room.GameInfo.Metadata["techLevel"].ShouldBe("introductory");
         result.Room.HostDeviceSessionId.ShouldBe(result.Session!.DeviceSessionId);
+
         result.Room.ExpiresAt.ShouldBe(now.AddSeconds(DefaultRoomTtlSeconds));
         result.Room.Members.Count.ShouldBe(1);
         var host = result.Room.Members.Single();
@@ -49,8 +68,8 @@ public class RoomManagerTests
         var generator = new SequenceRoomCodeGenerator("ABC234", "ABC234", "DEF567");
         var manager = CreateManager(generator);
 
-        var first = manager.CreateRoom(Guid.NewGuid());
-        var second = manager.CreateRoom(Guid.NewGuid());
+        var first = manager.CreateRoom(CreateGameInfo());
+        var second = manager.CreateRoom(CreateGameInfo());
 
         first.Room!.RoomCode.ShouldBe("ABC234");
         second.Room!.RoomCode.ShouldBe("DEF567");
@@ -64,8 +83,8 @@ public class RoomManagerTests
             new SequenceRoomCodeGenerator("ABC234", "DEF567"),
             maxConcurrentRooms: 1);
 
-        manager.CreateRoom(Guid.NewGuid());
-        var result = manager.CreateRoom(Guid.NewGuid());
+        manager.CreateRoom(CreateGameInfo());
+        var result = manager.CreateRoom(CreateGameInfo());
 
         result.Outcome.ShouldBe(RoomCreationOutcome.HubAtCapacity);
         result.ActiveRoomCount.ShouldBe(1);
@@ -74,11 +93,23 @@ public class RoomManagerTests
     }
 
     [Fact]
-    public void CreateRoom_WithEmptyGameId_ThrowsArgumentException()
+    public void CreateRoom_WithEmptyGameInfoHostId_ThrowsArgumentException()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
 
-        Should.Throw<ArgumentException>(() => manager.CreateRoom(Guid.Empty));
+        Should.Throw<ArgumentException>(
+            () => manager.CreateRoom(new RoomGameInfo(Guid.Empty, "MakaMek", "v0.64.0")));
+    }
+
+    [Fact]
+    public void CreateRoom_WithInvalidGameInfo_ThrowsArgumentExceptionNamingTheOffendingField()
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
+
+        var exception = Should.Throw<ArgumentException>(
+            () => manager.CreateRoom(new RoomGameInfo(Guid.NewGuid(), "not a valid id", "v0.64.0")));
+
+        exception.Message.ShouldContain(nameof(RoomGameInfo.Id));
     }
 
     [Fact]
@@ -89,11 +120,11 @@ public class RoomManagerTests
         var timeProvider = new FixedTimeProvider(now);
         var manager = CreateManager(generator, maxConcurrentRooms: 1, timeProvider: timeProvider);
 
-        manager.CreateRoom(Guid.NewGuid());
+        manager.CreateRoom(CreateGameInfo());
 
         timeProvider.Advance(TimeSpan.FromSeconds(DefaultRoomTtlSeconds).Add(TimeSpan.FromMinutes(1)));
 
-        var result = manager.CreateRoom(Guid.NewGuid());
+        var result = manager.CreateRoom(CreateGameInfo());
 
         result.Outcome.ShouldBe(RoomCreationOutcome.Created);
         result.Room.ShouldNotBeNull();
@@ -107,10 +138,10 @@ public class RoomManagerTests
         var alwaysSame = new AlwaysSameCodeGenerator("DUP");
         var manager = CreateManager(alwaysSame);
 
-        manager.CreateRoom(Guid.NewGuid());
+        manager.CreateRoom(CreateGameInfo());
 
         var ex = Should.Throw<InvalidOperationException>(
-            () => manager.CreateRoom(Guid.NewGuid()));
+            () => manager.CreateRoom(CreateGameInfo()));
 
         ex.Message.ShouldBe("Unable to generate a unique room code.");
         alwaysSame.GeneratedCount.ShouldBe(RoomManager.MaximumCodeGenerationAttempts + 1);
@@ -137,7 +168,7 @@ public class RoomManagerTests
             new SequenceRoomCodeGenerator("ABC234"),
             timeProvider: timeProvider);
 
-        manager.CreateRoom(Guid.NewGuid());
+        manager.CreateRoom(CreateGameInfo());
 
         timeProvider.Advance(TimeSpan.FromSeconds(DefaultRoomTtlSeconds).Add(TimeSpan.FromMinutes(1)));
 
@@ -151,7 +182,7 @@ public class RoomManagerTests
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
 
-        manager.CreateRoom(Guid.NewGuid());
+        manager.CreateRoom(CreateGameInfo());
 
         var result = manager.JoinRoom("ABC234", sessionToken: null);
 
@@ -166,7 +197,7 @@ public class RoomManagerTests
             new SequenceRoomCodeGenerator("ABC234"),
             now: now);
 
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
         var result = manager.JoinRoom("ABC234", sessionToken: null);
@@ -192,7 +223,7 @@ public class RoomManagerTests
             new SequenceRoomCodeGenerator("ABC234"),
             now: now);
 
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
         var first = manager.JoinRoom("ABC234", sessionToken: null);
@@ -214,7 +245,7 @@ public class RoomManagerTests
             new SequenceRoomCodeGenerator("ABC234"),
             now: now);
 
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
         var result = manager.JoinRoom("ABC234", sessionToken: null);
@@ -230,7 +261,7 @@ public class RoomManagerTests
             new SequenceRoomCodeGenerator("ABC234"),
             now: now);
 
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
 
         var result = manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
@@ -242,7 +273,7 @@ public class RoomManagerTests
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
 
-        _ = manager.CreateRoom(Guid.NewGuid());
+        _ = manager.CreateRoom(CreateGameInfo());
 
         var result = manager.MarkRoomReady("ABC234", "invalid-token");
 
@@ -268,7 +299,7 @@ public class RoomManagerTests
             new SequenceRoomCodeGenerator("ABC234"),
             timeProvider: timeProvider);
 
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
 
         timeProvider.Advance(TimeSpan.FromSeconds(DefaultRoomTtlSeconds).Add(TimeSpan.FromMinutes(1)));
 
@@ -281,7 +312,7 @@ public class RoomManagerTests
     public void MarkRoomReady_WhenRoomAlreadyActive_ReturnsInvalidRoomState()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
         var result = manager.MarkRoomReady("ABC234", createResult.Session.Token);
@@ -294,7 +325,7 @@ public class RoomManagerTests
     public void LockRoom_ActiveRoom_TransitionsToLocked()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
         var result = manager.LockRoom("ABC234", createResult.Session.Token);
@@ -322,7 +353,7 @@ public class RoomManagerTests
             new SequenceRoomCodeGenerator("ABC234"),
             timeProvider: timeProvider);
 
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
         timeProvider.Advance(TimeSpan.FromSeconds(DefaultRoomTtlSeconds).Add(TimeSpan.FromMinutes(1)));
@@ -336,7 +367,7 @@ public class RoomManagerTests
     public void LockRoom_NonHost_ReturnsNotHost()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
         var result = manager.LockRoom("ABC234", "not-the-host-token");
@@ -349,7 +380,7 @@ public class RoomManagerTests
     public void LockRoom_WhenRoomNotActive_ReturnsInvalidRoomState()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
 
         var result = manager.LockRoom("ABC234", createResult.Session!.Token);
 
@@ -361,7 +392,7 @@ public class RoomManagerTests
     public void JoinRoom_LockedRoom_NewDevice_ReturnsRoomFull()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
         manager.LockRoom("ABC234", createResult.Session.Token);
 
@@ -376,7 +407,7 @@ public class RoomManagerTests
     public void JoinRoom_LockedRoom_ExistingDeviceSession_ReturnsJoined()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
         var joined = manager.JoinRoom("ABC234", sessionToken: null);
@@ -394,7 +425,7 @@ public class RoomManagerTests
     public void JoinRoom_HostToken_RejectsWithForbidden()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
         var result = manager.JoinRoom("ABC234", sessionToken: createResult.Session!.Token);
@@ -406,7 +437,7 @@ public class RoomManagerTests
     public void RemoveMember_RemovesRosterEntryAndRevokesSessions()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
         var joined = manager.JoinRoom("ABC234", sessionToken: null);
@@ -427,7 +458,7 @@ public class RoomManagerTests
     public void RemoveMember_UnknownDeviceSession_ReturnsMemberNotFound()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
         var result = manager.RemoveMember("ABC234", createResult.Session!.Token, Guid.NewGuid());
@@ -440,7 +471,7 @@ public class RoomManagerTests
     public void RemoveMember_HostDeviceSession_ReturnsCannotRemoveHost()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
         var hostDeviceSessionId = createResult.Session!.DeviceSessionId;
 
@@ -454,7 +485,7 @@ public class RoomManagerTests
     public void RemoveMember_NonHost_ReturnsNotHost()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
         var joined = manager.JoinRoom("ABC234", sessionToken: null);
@@ -485,7 +516,7 @@ public class RoomManagerTests
             new SequenceRoomCodeGenerator("ABC234"),
             timeProvider: timeProvider);
 
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
         var joined = manager.JoinRoom("ABC234", sessionToken: null);
@@ -501,7 +532,7 @@ public class RoomManagerTests
     public void RemoveMember_MemberWithOwnToken_LeavesRoom()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
         var joined = manager.JoinRoom("ABC234", sessionToken: null);
@@ -520,7 +551,7 @@ public class RoomManagerTests
     public void RemoveMember_MemberWithAnotherMembersToken_ReturnsNotHost()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
         var firstJoined = manager.JoinRoom("ABC234", sessionToken: null);
@@ -544,7 +575,7 @@ public class RoomManagerTests
             new SequenceRoomCodeGenerator("ABC234"),
             timeProvider: timeProvider);
 
-        var createResult = manager.CreateRoom(Guid.NewGuid());
+        var createResult = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", createResult.Session!.Token);
 
         var joined = manager.JoinRoom("ABC234", sessionToken: null);
@@ -562,7 +593,7 @@ public class RoomManagerTests
     public void AuthenticateSession_WithValidHostToken_ReturnsBoundSession()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
 
         var session = manager.AuthenticateSession(created.Session!.Token);
 
@@ -577,7 +608,7 @@ public class RoomManagerTests
     public void AuthenticateSession_WithValidClientToken_ReturnsBoundSession()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", created.Session!.Token);
         var joined = manager.JoinRoom("ABC234", sessionToken: null);
 
@@ -597,7 +628,7 @@ public class RoomManagerTests
     public void AuthenticateSession_WithMissingOrUnknownToken_ReturnsNull(string? token)
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        manager.CreateRoom(Guid.NewGuid());
+        manager.CreateRoom(CreateGameInfo());
 
         manager.AuthenticateSession(token!).ShouldBeNull();
     }
@@ -610,7 +641,7 @@ public class RoomManagerTests
         var manager = CreateManager(
             new SequenceRoomCodeGenerator("ABC234"),
             timeProvider: timeProvider);
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
 
         timeProvider.Advance(TimeSpan.FromSeconds(DefaultRoomTtlSeconds).Add(TimeSpan.FromMinutes(1)));
 
@@ -621,7 +652,7 @@ public class RoomManagerTests
     public void AuthenticateSession_WithRevokedClientToken_ReturnsNull()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", created.Session!.Token);
         var joined = manager.JoinRoom("ABC234", sessionToken: null);
 
@@ -638,7 +669,7 @@ public class RoomManagerTests
         var manager = CreateManager(
             new SequenceRoomCodeGenerator("ABC234"),
             timeProvider: timeProvider);
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", created.Session!.Token);
         var clientA = manager.JoinRoom("ABC234", sessionToken: null);
 
@@ -656,7 +687,7 @@ public class RoomManagerTests
     public void AuthenticateSession_WithLockedRoomToken_ReturnsBoundSession()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", created.Session!.Token);
         manager.LockRoom("ABC234", created.Session.Token);
 
@@ -667,7 +698,7 @@ public class RoomManagerTests
     public void Connections_RegisterReplaceUnregisterAndFindHost()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
         var hostDeviceSessionId = created.Session!.DeviceSessionId;
 
         manager.RegisterConnection("ABC234", hostDeviceSessionId, "host-old").ShouldBeNull();
@@ -682,9 +713,8 @@ public class RoomManagerTests
     public void HostAndJoiningDevice_RegisterExactlyTwoDeviceSessionsAndConnections()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var hostGameId = Guid.NewGuid();
 
-        var created = manager.CreateRoom(hostGameId);
+        var created = manager.CreateRoom(CreateGameInfo());
         var hostDeviceSessionId = created.Session!.DeviceSessionId;
         manager.MarkRoomReady("ABC234", created.Session!.Token);
 
@@ -719,7 +749,7 @@ public class RoomManagerTests
         var now = new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero);
         var timeProvider = new FixedTimeProvider(now);
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), timeProvider: timeProvider);
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", created.Session!.Token);
         manager.MarkRoomForDissolution("ABC234");
 
@@ -734,7 +764,7 @@ public class RoomManagerTests
     {
         var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero));
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), timeProvider: timeProvider);
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", created.Session!.Token);
         manager.MarkRoomForDissolution("ABC234");
 
@@ -751,7 +781,7 @@ public class RoomManagerTests
     {
         var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero));
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), timeProvider: timeProvider);
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", created.Session!.Token);
         manager.MarkRoomForDissolution("ABC234");
 
@@ -769,7 +799,7 @@ public class RoomManagerTests
     {
         var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero));
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), timeProvider: timeProvider);
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", created.Session!.Token);
         manager.MarkRoomForDissolution("ABC234");
 
@@ -783,7 +813,7 @@ public class RoomManagerTests
     {
         var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero));
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), timeProvider: timeProvider);
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
         var hostDeviceSessionId = created.Session!.DeviceSessionId;
         manager.RegisterConnection("ABC234", hostDeviceSessionId, "host-old");
         manager.RegisterConnection("ABC234", hostDeviceSessionId, "host-new");
@@ -800,7 +830,7 @@ public class RoomManagerTests
     {
         var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero));
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), timeProvider: timeProvider);
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
         var hostDeviceSessionId = created.Session!.DeviceSessionId;
         manager.RegisterConnection("ABC234", hostDeviceSessionId, "host-only");
 
@@ -815,7 +845,7 @@ public class RoomManagerTests
     {
         var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero));
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), timeProvider: timeProvider);
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", created.Session!.Token);
         manager.MarkRoomForDissolution("ABC234");
 
@@ -835,7 +865,7 @@ public class RoomManagerTests
     {
         var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero));
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), timeProvider: timeProvider);
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
         if (state is RoomState.Active or RoomState.Locked)
         {
             manager.MarkRoomReady("ABC234", created.Session!.Token);
@@ -859,7 +889,7 @@ public class RoomManagerTests
             now: now,
             roomTtlSeconds: 600);
 
-        var result = manager.CreateRoom(Guid.NewGuid());
+        var result = manager.CreateRoom(CreateGameInfo());
 
         result.Room!.ExpiresAt.ShouldBe(now.AddSeconds(600));
         result.Session!.ExpiresAt.ShouldBe(now.AddSeconds(600));
@@ -870,7 +900,7 @@ public class RoomManagerTests
     {
         var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero));
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), timeProvider: timeProvider);
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", created.Session!.Token);
         manager.MarkRoomForDissolution("ABC234");
 
@@ -890,7 +920,7 @@ public class RoomManagerTests
             new SequenceRoomCodeGenerator("ABC234"),
             timeProvider: timeProvider,
             roomTtlSeconds: 600);
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
 
         timeProvider.Advance(TimeSpan.FromSeconds(600));
 
@@ -905,7 +935,7 @@ public class RoomManagerTests
             new SequenceRoomCodeGenerator("ABC234"),
             timeProvider: timeProvider,
             dissolutionGracePeriodSeconds: 15);
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", created.Session!.Token);
         manager.MarkRoomForDissolution("ABC234");
 
@@ -989,11 +1019,10 @@ public class RoomManagerTests
     [Fact]
     public void TwoDevices_HostAndJoiner_HaveDistinctDeviceSessions_AndNoPlayerIdentityInHubState()
     {
-        var hostGameId = Guid.NewGuid();
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
 
         // Host creates room
-        var createResult = manager.CreateRoom(hostGameId);
+        var createResult = manager.CreateRoom(CreateGameInfo());
         createResult.Outcome.ShouldBe(RoomCreationOutcome.Created);
         var room = createResult.Room!;
         var hostSession = createResult.Session!;
@@ -1046,7 +1075,7 @@ public class RoomManagerTests
         var logger = new CapturingLogger<RoomManager>();
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), logger: logger);
 
-        manager.CreateRoom(Guid.NewGuid());
+        manager.CreateRoom(CreateGameInfo());
 
         logger.GetMessages(LogLevel.Information).ShouldContain(
             message => message.Contains("Room ABC234 created", StringComparison.Ordinal));
@@ -1058,7 +1087,7 @@ public class RoomManagerTests
         var logger = new CapturingLogger<RoomManager>();
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), maxConcurrentRooms: 0, logger: logger);
 
-        manager.CreateRoom(Guid.NewGuid());
+        manager.CreateRoom(CreateGameInfo());
 
         logger.GetMessages(LogLevel.Warning).ShouldContain(
             message => message.Contains("relay capacity reached", StringComparison.Ordinal));
@@ -1082,7 +1111,7 @@ public class RoomManagerTests
         var logger = new CapturingLogger<RoomManager>();
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), logger: logger);
 
-        var creation = manager.CreateRoom(Guid.NewGuid());
+        var creation = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", creation.Session!.Token);
         manager.JoinRoom("ABC234", sessionToken: null);
 
@@ -1100,7 +1129,7 @@ public class RoomManagerTests
     {
         var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), now: now);
-        var creation = manager.CreateRoom(Guid.NewGuid());
+        var creation = manager.CreateRoom(CreateGameInfo());
 
         var result = manager.IssueRelayTicket("ABC234", creation.Session!.Token);
 
@@ -1111,7 +1140,7 @@ public class RoomManagerTests
 
         var session = manager.RedeemRelayTicket(result.Ticket!);
         session.ShouldNotBeNull();
-        session!.RoomCode.ShouldBe("ABC234");
+        session.RoomCode.ShouldBe("ABC234");
         session.Token.ShouldBe(creation.Session.Token);
     }
 
@@ -1120,7 +1149,7 @@ public class RoomManagerTests
     {
         var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), now: now, relayTicketTtlSeconds: 300);
-        var creation = manager.CreateRoom(Guid.NewGuid());
+        var creation = manager.CreateRoom(CreateGameInfo());
 
         var result = manager.IssueRelayTicket("ABC234", creation.Session!.Token);
 
@@ -1135,7 +1164,7 @@ public class RoomManagerTests
     public void IssueRelayTicket_WithMissingOrInvalidSessionToken_ReturnsSessionInvalid(string? sessionToken)
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        manager.CreateRoom(Guid.NewGuid());
+        manager.CreateRoom(CreateGameInfo());
 
         var result = manager.IssueRelayTicket("ABC234", sessionToken!);
 
@@ -1160,7 +1189,7 @@ public class RoomManagerTests
         var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
         var timeProvider = new FixedTimeProvider(now);
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), timeProvider: timeProvider);
-        var creation = manager.CreateRoom(Guid.NewGuid());
+        var creation = manager.CreateRoom(CreateGameInfo());
 
         timeProvider.Advance(TimeSpan.FromSeconds(DefaultRoomTtlSeconds).Add(TimeSpan.FromMinutes(1)));
 
@@ -1175,7 +1204,7 @@ public class RoomManagerTests
     {
         var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero));
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), timeProvider: timeProvider);
-        var created = manager.CreateRoom(Guid.NewGuid());
+        var created = manager.CreateRoom(CreateGameInfo());
         manager.MarkRoomReady("ABC234", created.Session!.Token);
         manager.MarkRoomForDissolution("ABC234");
 
@@ -1193,7 +1222,7 @@ public class RoomManagerTests
     {
         var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), now: now);
-        var creation = manager.CreateRoom(Guid.NewGuid());
+        var creation = manager.CreateRoom(CreateGameInfo());
 
         for (var i = 0; i < Room.MaxActiveRelayTickets; i++)
         {
@@ -1211,7 +1240,7 @@ public class RoomManagerTests
     public void IssueRelayTicket_WithUnknownSession_ReturnsSessionInvalid()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        manager.CreateRoom(Guid.NewGuid());
+        manager.CreateRoom(CreateGameInfo());
 
         var result = manager.IssueRelayTicket("ABC234", "no-such-session-token");
 
@@ -1223,8 +1252,8 @@ public class RoomManagerTests
     public void IssueRelayTicket_WithSessionFromAnotherRoom_ReturnsSessionInvalid()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234", "DEF567"));
-        var roomA = manager.CreateRoom(Guid.NewGuid());
-        manager.CreateRoom(Guid.NewGuid());
+        var roomA = manager.CreateRoom(CreateGameInfo());
+        manager.CreateRoom(CreateGameInfo());
 
         var result = manager.IssueRelayTicket("DEF567", roomA.Session!.Token);
 
@@ -1236,7 +1265,7 @@ public class RoomManagerTests
     public void IssueRelayTicket_WithRevokedSession_ReturnsSessionInvalid()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var creation = manager.CreateRoom(Guid.NewGuid());
+        var creation = manager.CreateRoom(CreateGameInfo());
         var hostSession = creation.Session!;
         manager.MarkRoomReady("ABC234", hostSession.Token);
         var joined = manager.JoinRoom("ABC234", sessionToken: null);
@@ -1274,7 +1303,7 @@ public class RoomManagerTests
     {
         var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), now: now);
-        var creation = manager.CreateRoom(Guid.NewGuid());
+        var creation = manager.CreateRoom(CreateGameInfo());
         var issued = manager.IssueRelayTicket("ABC234", creation.Session!.Token);
         issued.Outcome.ShouldBe(RelayTicketOutcome.Issued);
 
@@ -1283,7 +1312,7 @@ public class RoomManagerTests
 
         first.ShouldNotBeNull();
         second.ShouldNotBeNull();
-        second!.Token.ShouldBe(creation.Session.Token);
+        second.Token.ShouldBe(creation.Session.Token);
     }
 
     [Fact]
@@ -1292,7 +1321,7 @@ public class RoomManagerTests
         var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
         var timeProvider = new FixedTimeProvider(now);
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"), timeProvider: timeProvider);
-        var creation = manager.CreateRoom(Guid.NewGuid());
+        var creation = manager.CreateRoom(CreateGameInfo());
         var issued = manager.IssueRelayTicket("ABC234", creation.Session!.Token);
         issued.Outcome.ShouldBe(RelayTicketOutcome.Issued);
 
@@ -1307,7 +1336,7 @@ public class RoomManagerTests
     public void RedeemRelayTicket_AfterSessionRevoked_ReturnsNull()
     {
         var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
-        var creation = manager.CreateRoom(Guid.NewGuid());
+        var creation = manager.CreateRoom(CreateGameInfo());
         var hostSession = creation.Session!;
         manager.MarkRoomReady("ABC234", hostSession.Token);
         var joined = manager.JoinRoom("ABC234", sessionToken: null);

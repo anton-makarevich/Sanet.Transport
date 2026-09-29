@@ -8,13 +8,17 @@ namespace Sanet.Transport.SignalR.Hub.Tests.Rooms;
 public class JoinRoomEndpointTests
 {
     [Fact]
-    public async Task JoinRoom_ReadyRoom_ReturnsDeviceSessionAndHostGameId()
+    public async Task JoinRoom_ReadyRoom_ReturnsDeviceSessionAndGameInfo()
     {
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
-        var hostGameId = Guid.NewGuid();
+        var gameInfo = new RoomGameInfo(
+            Guid.NewGuid(),
+            "MakaMek",
+            "v0.64.0",
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["rules"] = "standard" });
 
-        using var createResponse = await RoomApiClient.CreateRoom(client, hostGameId);
+        using var createResponse = await RoomApiClient.CreateRoom(client, gameInfo);
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
 
@@ -30,7 +34,12 @@ public class JoinRoomEndpointTests
         result.Role.ShouldBe("Client");
         result.DeviceSessionId.ShouldNotBeNull();
         result.DeviceSessionId.ShouldNotBe(Guid.Empty);
-        result.HostGameId.ShouldBe(hostGameId);
+        result.GameInfo.ShouldNotBeNull();
+        result.GameInfo!.HostId.ShouldBe(gameInfo.HostId);
+        result.GameInfo.Id.ShouldBe("MakaMek");
+        result.GameInfo.Version.ShouldBe("v0.64.0");
+        result.GameInfo.Metadata.ShouldNotBeNull();
+        result.GameInfo.Metadata!["rules"].ShouldBe("standard");
         string.IsNullOrWhiteSpace(result.SessionToken).ShouldBeFalse();
         result.Error.ShouldBeNull();
     }
@@ -58,7 +67,7 @@ public class JoinRoomEndpointTests
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
-        using var createResponse = await RoomApiClient.CreateRoom(client, Guid.NewGuid());
+        using var createResponse = await RoomApiClient.CreateRoom(client, RoomApiClient.CreateGameInfo());
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
 
@@ -78,9 +87,9 @@ public class JoinRoomEndpointTests
     {
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
-        var hostGameId = Guid.NewGuid();
+        var gameInfo = new RoomGameInfo(Guid.NewGuid(), "MakaMek", "v0.64.0");
 
-        using var createResponse = await RoomApiClient.CreateRoom(client, hostGameId);
+        using var createResponse = await RoomApiClient.CreateRoom(client, gameInfo);
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
 
@@ -97,7 +106,8 @@ public class JoinRoomEndpointTests
         result.ShouldNotBeNull();
         result.Success.ShouldBeTrue();
         result.DeviceSessionId.ShouldBe(first.DeviceSessionId);
-        result.HostGameId.ShouldBe(hostGameId);
+        result.GameInfo.ShouldNotBeNull();
+        result.GameInfo!.HostId.ShouldBe(gameInfo.HostId);
     }
 
     [Fact]
@@ -105,9 +115,8 @@ public class JoinRoomEndpointTests
     {
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
-        var hostGameId = Guid.NewGuid();
 
-        using var createResponse = await RoomApiClient.CreateRoom(client, hostGameId);
+        using var createResponse = await RoomApiClient.CreateRoom(client, RoomApiClient.CreateGameInfo());
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
 
@@ -145,8 +154,7 @@ public class JoinRoomEndpointTests
         await using var factory = new HubApplicationFactory(joinRateLimitPerMinute: 2);
         using var client = factory.CreateClient();
 
-        var hostGameId = Guid.NewGuid();
-        using var createResponse = await RoomApiClient.CreateRoom(client, hostGameId);
+        using var createResponse = await RoomApiClient.CreateRoom(client, RoomApiClient.CreateGameInfo());
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
         await RoomApiClient.MarkReady(client, roomCode, createResult.SessionToken!);
@@ -165,9 +173,7 @@ public class JoinRoomEndpointTests
     {
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
-        var hostGameId = Guid.NewGuid();
-
-        using var createResponse = await RoomApiClient.CreateRoom(client, hostGameId);
+        using var createResponse = await RoomApiClient.CreateRoom(client, RoomApiClient.CreateGameInfo());
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
 
@@ -187,7 +193,7 @@ public class JoinRoomEndpointTests
         await using var factory = new HubApplicationFactory();
         using var client = factory.CreateClient();
 
-        using var createResponse = await RoomApiClient.CreateRoom(client, Guid.NewGuid());
+        using var createResponse = await RoomApiClient.CreateRoom(client, RoomApiClient.CreateGameInfo());
         var createResult = await createResponse.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions);
         var roomCode = createResult!.RoomCode!;
 

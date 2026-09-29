@@ -1,3 +1,4 @@
+using Sanet.Transport.Relay.Contracts;
 using Sanet.Transport.SignalR.Hub.Rooms;
 using Shouldly;
 
@@ -11,33 +12,79 @@ public class RoomTests
     [Fact]
     public void Constructor_SetsExpiresAtFromProvidedValue()
     {
-        var hostGameId = Guid.NewGuid();
+        var gameInfo = CreateGameInfo();
         var expiresAt = DefaultNow.Add(DefaultTtl);
 
-        var room = CreateRoom(Guid.NewGuid(), hostGameId);
+        var room = CreateRoom(Guid.NewGuid(), gameInfo);
 
         room.CreatedAt.ShouldBe(DefaultNow);
         room.ExpiresAt.ShouldBe(expiresAt);
     }
 
     [Fact]
-    public void Constructor_SetsHostGameIdFromCreateRequest()
+    public void Constructor_StoresGameInfoSeparatelyFromDeviceIdentity()
     {
-        var hostGameId = Guid.NewGuid();
+        var gameInfo = CreateGameInfo();
 
-        var room = CreateRoom(Guid.NewGuid(), hostGameId);
+        var room = CreateRoom(Guid.NewGuid(), gameInfo);
 
-        room.HostGameId.ShouldBe(hostGameId);
-        // HostGameId is game identity, not a membership or connection key.
-        room.Members.Single().DeviceSessionId.ShouldNotBe(hostGameId);
+        room.GameInfo.HostId.ShouldBe(gameInfo.HostId);
+        room.GameInfo.Id.ShouldBe("MakaMek");
+        room.GameInfo.Version.ShouldBe("v0.64.0");
+        // GameInfo.HostId is game identity, not a membership or connection key.
+        room.Members.Single().DeviceSessionId.ShouldNotBe(gameInfo.HostId);
+        room.HostDeviceSessionId.ShouldNotBe(gameInfo.HostId);
         room.LiveConnectionCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public void Constructor_NormalizesMissingMetadataToEmptyDictionary()
+    {
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
+
+        room.GameInfo.Metadata.ShouldNotBeNull();
+        room.GameInfo.Metadata.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Constructor_CopiesMetadata_SoLaterSourceMutationsDoNotReachTheRoom()
+    {
+        var metadata = new Dictionary<string, string>(StringComparer.Ordinal) { ["rules"] = "standard" };
+        var gameInfo = CreateGameInfo(metadata);
+
+        var room = CreateRoom(Guid.NewGuid(), gameInfo);
+        metadata["rules"] = "custom";
+        metadata["techLevel"] = "introductory";
+
+        room.GameInfo.Metadata.ShouldNotBeNull();
+        room.GameInfo.Metadata!.Count.ShouldBe(1);
+        room.GameInfo.Metadata["rules"].ShouldBe("standard");
+        room.GameInfo.Metadata.ContainsKey("techLevel").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Constructor_KeepsMetadataKeysCaseSensitive()
+    {
+        var metadata = new Dictionary<string, string>(StringComparer.Ordinal) { ["techLevel"] = "introductory" };
+
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo(metadata));
+
+        room.GameInfo.Metadata.ShouldNotBeNull();
+        room.GameInfo.Metadata!.ContainsKey("techlevel").ShouldBeFalse();
+        room.GameInfo.Metadata.ContainsKey("techLevel").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Constructor_NullGameInfo_Throws()
+    {
+        Should.Throw<ArgumentNullException>(() => CreateRoom(Guid.NewGuid(), null!));
     }
 
     [Fact]
     public void RemoveMember_HostDeviceSession_ReturnsFalse()
     {
         var hostDeviceSessionId = Guid.NewGuid();
-        var room = CreateRoom(hostDeviceSessionId, Guid.NewGuid());
+        var room = CreateRoom(hostDeviceSessionId, CreateGameInfo());
 
         var result = room.RemoveMember(hostDeviceSessionId);
 
@@ -49,7 +96,7 @@ public class RoomTests
     [Fact]
     public void RemoveMember_NonMember_ReturnsFalse()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
 
         var result = room.RemoveMember(Guid.NewGuid());
 
@@ -62,7 +109,7 @@ public class RoomTests
     {
         var hostDeviceSessionId = Guid.NewGuid();
         var clientDeviceSessionId = Guid.NewGuid();
-        var room = CreateRoom(hostDeviceSessionId, Guid.NewGuid());
+        var room = CreateRoom(hostDeviceSessionId, CreateGameInfo());
         var clientSession1 = room.AddClientMember(clientDeviceSessionId, DefaultNow, DefaultTtl, () => "client-token-1");
         var clientSession2 = room.AddClientMember(clientDeviceSessionId, DefaultNow, DefaultTtl, () => "client-token-2");
 
@@ -82,7 +129,7 @@ public class RoomTests
         var hostDeviceSessionId = Guid.NewGuid();
         var hostMember = new RoomMember(hostDeviceSessionId, RoomRole.Host, DefaultNow);
         var hostSession = new RoomSession("host-token", "WRONG", hostDeviceSessionId, RoomRole.Host, DefaultNow.Add(DefaultTtl));
-        var room = new Room("ABC234", Guid.NewGuid(), hostMember, hostSession, DefaultNow, DefaultNow.Add(DefaultTtl));
+        var room = new Room("ABC234", CreateGameInfo(), hostMember, hostSession, DefaultNow, DefaultNow.Add(DefaultTtl));
 
         var found = room.TryGetSession("host-token", out var session);
 
@@ -95,7 +142,7 @@ public class RoomTests
     public void RegisterConnection_ForDeviceSession_ReturnsReplacedConnectionAndTouchesRoom()
     {
         var deviceSessionId = Guid.NewGuid();
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
 
         room.RegisterConnection(deviceSessionId, "old", DefaultNow, DefaultTtl).ShouldBeNull();
         var replaced = room.RegisterConnection(deviceSessionId, "new", DefaultNow.AddMinutes(5), DefaultTtl);
@@ -111,7 +158,7 @@ public class RoomTests
     public void RemoveConnection_OnlyRemovesActiveConnection()
     {
         var deviceSessionId = Guid.NewGuid();
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
         room.RegisterConnection(deviceSessionId, "new", DefaultNow, DefaultTtl);
 
         room.RemoveConnection(deviceSessionId, "old", DefaultNow.AddMinutes(1), DefaultTtl).ShouldBeFalse();
@@ -127,7 +174,7 @@ public class RoomTests
     public void Reconnect_ReusesDeviceSessionAndRemapsConnection()
     {
         var hostDeviceSessionId = Guid.NewGuid();
-        var room = CreateRoom(hostDeviceSessionId, Guid.NewGuid());
+        var room = CreateRoom(hostDeviceSessionId, CreateGameInfo());
 
         // First connection for the host device, then a reconnect: same device
         // session identity, superseded ConnectionId, new active ConnectionId.
@@ -143,7 +190,7 @@ public class RoomTests
     [Fact]
     public void Dissolution_CanBeMarkedCancelledAndDetectedAtDeadline()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
         var grace = TimeSpan.FromSeconds(30);
 
         room.MarkForDissolution(DefaultNow, grace);
@@ -161,7 +208,7 @@ public class RoomTests
     [Fact]
     public void RevokeAllSessions_RevokesHostAndClientSessions()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
         var client = room.AddClientMember(Guid.NewGuid(), DefaultNow, DefaultTtl, () => "client-token");
 
         room.RevokeAllSessions();
@@ -174,7 +221,7 @@ public class RoomTests
     public void AddClientMember_HostDeviceSession_ThrowsAndLeavesHostValid()
     {
         var hostDeviceSessionId = Guid.NewGuid();
-        var room = CreateRoom(hostDeviceSessionId, Guid.NewGuid());
+        var room = CreateRoom(hostDeviceSessionId, CreateGameInfo());
 
         var ex = Should.Throw<InvalidOperationException>(() =>
             room.AddClientMember(hostDeviceSessionId, DefaultNow, DefaultTtl, () => "client-token"));
@@ -187,7 +234,7 @@ public class RoomTests
     [Fact]
     public void ValidateMemberSession_ClientTokenForOwnDevice_ReturnsTrue()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
         var client = room.AddClientMember(Guid.NewGuid(), DefaultNow, DefaultTtl, () => "client-token");
 
         room.ValidateMemberSession(client.Token, client.DeviceSessionId, DefaultNow).ShouldBeTrue();
@@ -196,7 +243,7 @@ public class RoomTests
     [Fact]
     public void ValidateMemberSession_ClientTokenForOtherDevice_ReturnsFalse()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
         var client = room.AddClientMember(Guid.NewGuid(), DefaultNow, DefaultTtl, () => "client-token");
         var otherDevice = Guid.NewGuid();
 
@@ -206,7 +253,7 @@ public class RoomTests
     [Fact]
     public void ValidateMemberSession_HostToken_ReturnsFalse()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
 
         room.ValidateMemberSession("host-token", room.HostDeviceSessionId, DefaultNow).ShouldBeFalse();
     }
@@ -214,7 +261,7 @@ public class RoomTests
     [Fact]
     public void ValidateMemberSession_ExpiredClientToken_ReturnsFalse()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
         var client = room.AddClientMember(Guid.NewGuid(), DefaultNow, DefaultTtl, () => "client-token");
 
         var expiredAt = DefaultNow.Add(DefaultTtl).Add(TimeSpan.FromMinutes(1));
@@ -225,7 +272,7 @@ public class RoomTests
     [Fact]
     public void IssueRelayTicket_WithLiveSession_StoresResolvableTicket()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
 
         var issued = room.IssueRelayTicket("host-token", "ticket-1", DefaultNow, TimeSpan.FromSeconds(60));
 
@@ -237,7 +284,7 @@ public class RoomTests
     [Fact]
     public void IssueRelayTicket_WithUnknownSession_ReturnsFalse()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
 
         var issued = room.IssueRelayTicket("no-such-token", "ticket-1", DefaultNow, TimeSpan.FromSeconds(60));
 
@@ -247,7 +294,7 @@ public class RoomTests
     [Fact]
     public void IssueRelayTicket_WithSessionPastOriginalExpiry_SlidesSessionToRoomExpiry()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
 
         // Session originally expired, but the room is still alive: issuance must
         // refresh the session so long-running games can re-authenticate (#52).
@@ -265,7 +312,7 @@ public class RoomTests
     [Fact]
     public void TryResolveRelayTicket_WithUnknownTicket_ReturnsFalse()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
 
         room.TryResolveRelayTicket("no-such-ticket", DefaultNow, out _).ShouldBeFalse();
     }
@@ -273,7 +320,7 @@ public class RoomTests
     [Fact]
     public void TryResolveRelayTicket_AfterTicketExpiry_ReturnsFalse()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
         room.IssueRelayTicket("host-token", "ticket-1", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
 
         room.TryResolveRelayTicket("ticket-1", DefaultNow.AddSeconds(61), out _).ShouldBeFalse();
@@ -282,7 +329,7 @@ public class RoomTests
     [Fact]
     public void TryResolveRelayTicket_BeforeTicketExpiry_ResolvesRepeatedly()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
         room.IssueRelayTicket("host-token", "ticket-1", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
 
         room.TryResolveRelayTicket("ticket-1", DefaultNow.AddSeconds(30), out _).ShouldBeTrue();
@@ -293,7 +340,7 @@ public class RoomTests
     public void TryResolveRelayTicket_AfterSessionRevoked_ReturnsFalse()
     {
         var clientDeviceSessionId = Guid.NewGuid();
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
         var client = room.AddClientMember(clientDeviceSessionId, DefaultNow, DefaultTtl, () => "client-token");
         room.IssueRelayTicket(client.Token, "ticket-1", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
 
@@ -305,7 +352,7 @@ public class RoomTests
     [Fact]
     public void TryResolveRelayTicket_WhenRoomExpired_ReturnsFalse()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
         room.IssueRelayTicket("host-token", "ticket-1", DefaultNow, TimeSpan.FromHours(5)).ShouldBeTrue();
 
         room.TryResolveRelayTicket("ticket-1", DefaultNow.AddHours(3), out _).ShouldBeFalse();
@@ -314,7 +361,7 @@ public class RoomTests
     [Fact]
     public void IssueRelayTicket_WithExpiredTicketsPresent_PrunesThemBeforeIssuing()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
         room.IssueRelayTicket("host-token", "expired-ticket", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
         var later = DefaultNow.AddSeconds(61);
 
@@ -327,7 +374,7 @@ public class RoomTests
     [Fact]
     public void TryResolveRelayTicket_RemovesExpiredTicketsAsLookupSideEffect()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
         room.IssueRelayTicket("host-token", "expired-ticket", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
         var later = DefaultNow.AddSeconds(61);
 
@@ -342,7 +389,7 @@ public class RoomTests
     [Fact]
     public void IssueRelayTicket_AtCapacityWithAllLiveTickets_ReturnsFalse()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
 
         for (var i = 0; i < Room.MaxActiveRelayTickets; i++)
         {
@@ -356,7 +403,7 @@ public class RoomTests
     public void IssueRelayTicket_AfterMemberRemoval_TicketsBoundToRevokedSessionsDoNotBlockIssuance()
     {
         var clientDeviceSessionId = Guid.NewGuid();
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
         var client = room.AddClientMember(clientDeviceSessionId, DefaultNow, DefaultTtl, () => "client-token");
 
         for (var i = 0; i < Room.MaxActiveRelayTickets; i++)
@@ -374,7 +421,7 @@ public class RoomTests
     public void IssueRelayTicket_AfterRejoin_TicketsBoundToReplacedSessionsDoNotBlockIssuance()
     {
         var clientDeviceSessionId = Guid.NewGuid();
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
         var client = room.AddClientMember(clientDeviceSessionId, DefaultNow, DefaultTtl, () => "client-token-1");
 
         for (var i = 0; i < Room.MaxActiveRelayTickets; i++)
@@ -389,7 +436,7 @@ public class RoomTests
     [Fact]
     public void IssueRelayTicket_CleanupPreservesValidTicketsForLiveSessions()
     {
-        var room = CreateRoom(Guid.NewGuid(), Guid.NewGuid());
+        var room = CreateRoom(Guid.NewGuid(), CreateGameInfo());
         room.IssueRelayTicket("host-token", "ticket-1", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
         var client = room.AddClientMember(Guid.NewGuid(), DefaultNow, DefaultTtl, () => "client-token");
         room.IssueRelayTicket(client.Token, "stale", DefaultNow, TimeSpan.FromSeconds(60)).ShouldBeTrue();
@@ -402,10 +449,13 @@ public class RoomTests
         room.TryResolveRelayTicket("ticket-2", DefaultNow, out _).ShouldBeTrue();
     }
 
-    private static Room CreateRoom(Guid hostDeviceSessionId, Guid hostGameId)
+    private static RoomGameInfo CreateGameInfo(IReadOnlyDictionary<string, string>? metadata = null) =>
+        new(Guid.NewGuid(), "MakaMek", "v0.64.0", metadata);
+
+    private static Room CreateRoom(Guid hostDeviceSessionId, RoomGameInfo gameInfo)
     {
         var hostMember = new RoomMember(hostDeviceSessionId, RoomRole.Host, DefaultNow);
         var hostSession = new RoomSession("host-token", "ABC234", hostDeviceSessionId, RoomRole.Host, DefaultNow.Add(DefaultTtl));
-        return new Room("ABC234", hostGameId, hostMember, hostSession, DefaultNow, DefaultNow.Add(DefaultTtl));
+        return new Room("ABC234", gameInfo, hostMember, hostSession, DefaultNow, DefaultNow.Add(DefaultTtl));
     }
 }

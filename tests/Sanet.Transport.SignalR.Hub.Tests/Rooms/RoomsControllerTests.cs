@@ -16,7 +16,7 @@ public class RoomsControllerTests
     private readonly CapturingLogger<RoomsController> _logger = new();
     private readonly RoomsController _sut;
 
-    private static readonly Guid HostGameId = Guid.NewGuid();
+    private static readonly RoomGameInfo GameInfo = new(Guid.NewGuid(), "MakaMek", "v0.64.0");
     private static readonly Guid DeviceSessionId = Guid.NewGuid();
     private const string SessionToken = "test-session-token";
     private const string RoomCode = "ABC123";
@@ -47,7 +47,10 @@ public class RoomsControllerTests
         response.Success.ShouldBeTrue();
         response.SessionToken.ShouldBe(SessionToken);
         response.DeviceSessionId.ShouldBe(DeviceSessionId);
-        response.HostGameId.ShouldBe(HostGameId);
+        response.GameInfo.ShouldNotBeNull();
+        response.GameInfo!.HostId.ShouldBe(GameInfo.HostId);
+        response.GameInfo.Id.ShouldBe(GameInfo.Id);
+        response.GameInfo.Version.ShouldBe(GameInfo.Version);
     }
 
     [Fact]
@@ -522,10 +525,10 @@ public class RoomsControllerTests
     {
         var room = CreateRoom();
         var session = new RoomSession(SessionToken, RoomCode, DeviceSessionId, RoomRole.Host, DateTimeOffset.UtcNow.AddHours(2));
-        _roomManager.CreateRoom(HostGameId)
+        _roomManager.CreateRoom(GameInfo)
             .Returns(RoomCreationResult.Created(room, session, 1));
 
-        _sut.CreateRoom(new CreateRoomRequest(HostGameId));
+        _sut.CreateRoom(new CreateRoomRequest(GameInfo));
 
         _logger.GetMessages(LogLevel.Information).ShouldContain(
             message => message.Contains("succeeded: room", StringComparison.Ordinal));
@@ -659,6 +662,6 @@ public class RoomsControllerTests
         var hostDeviceSessionId = Guid.NewGuid();
         var hostMember = new RoomMember(hostDeviceSessionId, RoomRole.Host, DateTimeOffset.UtcNow);
         var hostSession = new RoomSession("host-token", RoomCode, hostDeviceSessionId, RoomRole.Host, DateTimeOffset.UtcNow.AddHours(2));
-        return new Room(RoomCode, HostGameId, hostMember, hostSession, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(2));
+        return new Room(RoomCode, GameInfo, hostMember, hostSession, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(2));
     }
 }

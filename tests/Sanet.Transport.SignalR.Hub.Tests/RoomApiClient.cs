@@ -16,13 +16,32 @@ internal static class RoomApiClient
 {
     public static JsonSerializerOptions JsonOptions { get; } = CreateJsonOptions();
 
+    /// <summary>
+    /// Builds a valid <see cref="RoomGameInfo"/> for tests that do not care about the specific
+    /// game attributes. Pass an explicit value when the test asserts on the game info.
+    /// </summary>
+    public static RoomGameInfo CreateGameInfo(
+        Guid? hostId = null,
+        string id = DefaultGameId,
+        string version = DefaultGameVersion) =>
+        new(hostId ?? Guid.NewGuid(), id, version);
+
+    public const string DefaultGameId = "MakaMek";
+    public const string DefaultGameVersion = "v0.64.0";
+
     public static async Task<HttpResponseMessage> CreateRoom(
         HttpClient client,
         Guid gameId,
+        string? apiKey = HubApplicationFactory.ApiKey) =>
+        await CreateRoom(client, CreateGameInfo(gameId), apiKey);
+
+    public static async Task<HttpResponseMessage> CreateRoom(
+        HttpClient client,
+        RoomGameInfo gameInfo,
         string? apiKey = HubApplicationFactory.ApiKey)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/rooms");
-        request.Content = JsonContent.Create(new CreateRoomRequest(gameId));
+        request.Content = JsonContent.Create(new CreateRoomRequest(gameInfo));
         AddApiKey(request, apiKey);
         return await client.SendAsync(request);
     }
