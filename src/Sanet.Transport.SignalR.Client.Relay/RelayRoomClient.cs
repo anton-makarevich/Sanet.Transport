@@ -174,6 +174,83 @@ public sealed class RelayRoomClient : IRelayRoomClient
         return RoomSessionResult.Failed(MapHubError(payload.Error, response.StatusCode));
     }
 
+    public async Task<RoomListResult> ListRooms(
+        RoomListFilter filter,
+        CancellationToken cancellationToken = default,
+        RelayClientOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+
+        _logger.LogInformation(
+            "Listing relay rooms a player can join for game {GameId}",
+            filter.GameId);
+
+        return await ExecuteAsync(
+            ct => ListRoomsCore(filter, options, ct),
+            RoomListResult.Failed,
+            "list rooms",
+            cancellationToken);
+    }
+
+    private async Task<RoomListResult> ListRoomsCore(
+        RoomListFilter filter,
+        RelayClientOptions? options,
+        CancellationToken cancellationToken)
+    {
+        var relativePath = BuildListRoomsPath(filter);
+
+        using var request = await CreateRequest(
+            HttpMethod.Get,
+            relativePath,
+            sessionToken: null,
+            options);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (TryMapSpecialStatus(response.StatusCode, body, out var specialError))
+        {
+            return RoomListResult.Failed(specialError);
+        }
+
+        var payload = DeserializeOrNull<ListRoomsResponse>(body);
+        if (payload is null)
+        {
+            return RoomListResult.Failed(DeserializationError());
+        }
+
+        if (response.IsSuccessStatusCode)
+        {
+            _logger.LogInformation(
+                "Listed {RoomCount} relay room(s) a player can join for game {GameId}",
+                payload.Rooms.Count,
+                filter.GameId);
+            return RoomListResult.Succeeded(payload.Rooms);
+        }
+
+        return RoomListResult.Failed(MapHubError(null, response.StatusCode));
+    }
+
+    private static string BuildListRoomsPath(RoomListFilter filter)
+    {
+        var query = new List<string> { $"gameId={Uri.EscapeDataString(filter.GameId)}" };
+
+        if (filter.Version is { } version)
+        {
+            query.Add($"version={Uri.EscapeDataString(version)}");
+        }
+
+        if (filter.Metadata is { } metadata)
+        {
+            foreach (var (key, value) in metadata)
+            {
+                query.Add($"metadata[{Uri.EscapeDataString(key)}]={Uri.EscapeDataString(value)}");
+            }
+        }
+
+        return $"api/rooms?{string.Join("&", query)}";
+    }
+
     public Task<RoomOperationResult> Ready(
         string roomCode,
         string sessionToken,

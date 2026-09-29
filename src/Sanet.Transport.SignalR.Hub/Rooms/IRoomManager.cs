@@ -14,6 +14,14 @@ public interface IRoomManager
     /// <see cref="RoomGameInfoLimits"/>.
     /// </summary>
     RoomCreationResult CreateRoom(RoomGameInfo gameInfo);
+
+    /// <summary>
+    /// Lists rooms a player can join matching the filter: rooms that are locked, expired, or
+    /// dissolved are excluded. Rooms still waiting for the host to mark them ready are included.
+    /// Returns a detached snapshot; the list call never extends a room's expiry.
+    /// </summary>
+    IReadOnlyList<RoomSummary> ListRooms(RoomListFilter filter);
+
     RoomJoinResult JoinRoom(string roomCode, string? sessionToken);
     RoomReadyResult MarkRoomReady(string roomCode, string sessionToken);
     RoomLockResult LockRoom(string roomCode, string sessionToken);

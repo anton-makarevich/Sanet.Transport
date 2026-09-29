@@ -76,6 +76,68 @@ public sealed class RoomsController(
                 Error: null));
     }
 
+    [HttpGet]
+    [ProducesResponseType<ListRoomsResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public ActionResult<ListRoomsResponse> ListRooms(
+        [FromQuery] string? gameId,
+        [FromQuery] string? version)
+    {
+        if (string.IsNullOrWhiteSpace(gameId))
+        {
+            return ValidationProblem(new ValidationProblemDetails(
+                new Dictionary<string, string[]>
+                {
+                    [RoomGameInfoValidator.GameIdKey] = ["gameId is required."]
+                }));
+        }
+
+        var metadata = CollectMetadataFilters(Request.Query);
+        var filter = new RoomListFilter(gameId, version, metadata);
+        var validationErrors = RoomGameInfoValidator.ValidateFilter(filter);
+
+        if (validationErrors.Count > 0)
+        {
+            logger.LogWarning(
+                "List-rooms request rejected: validation failed ({FieldCount} field(s))",
+                validationErrors.Count);
+            return ValidationProblem(new ValidationProblemDetails(validationErrors));
+        }
+
+        var rooms = roomManager.ListRooms(filter);
+
+        logger.LogInformation(
+            "List-rooms request for game {GameId} returned {RoomCount} room(s) a player can join",
+            filter.GameId,
+            rooms.Count);
+
+        return Ok(new ListRoomsResponse(rooms));
+    }
+
+    /// <summary>
+    /// Collects <c>metadata[key]=value</c> query parameters in order of first appearance.
+    /// The <c>metadata</c> prefix is parsed manually because the query-string dictionary
+    /// binder would swallow unrelated parameters as dictionary entries.
+    /// </summary>
+    private static Dictionary<string, string> CollectMetadataFilters(IQueryCollection query)
+    {
+        var metadata = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var (key, value) in query)
+        {
+            if (!key.StartsWith("metadata[", StringComparison.Ordinal)
+                || !key.EndsWith("]", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var name = key["metadata[".Length..^1];
+            metadata[name] = value.ToString();
+        }
+
+        return metadata;
+    }
+
     [HttpPost("{roomCode}/join")]
     [EnableRateLimiting("JoinRateLimit")]
     [ProducesResponseType<JoinResponse>(StatusCodes.Status200OK)]

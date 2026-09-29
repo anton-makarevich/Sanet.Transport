@@ -231,4 +231,166 @@ public class RoomGameInfoValidatorTests
             RoomGameInfoValidator.VersionKey
         ], ignoreOrder: true);
     }
+
+    [Fact]
+    public void ValidateFilter_ValidFilter_ReturnsNoErrors()
+    {
+        var filter = new RoomListFilter(
+            "MakaMek",
+            "v0.64.0",
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["rules"] = "standard" });
+
+        var errors = RoomGameInfoValidator.ValidateFilter(filter);
+
+        errors.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ValidateFilter_NullFilter_ReportsGameIdKey()
+    {
+        var errors = RoomGameInfoValidator.ValidateFilter(null);
+
+        errors.ShouldContainKey(RoomGameInfoValidator.GameIdKey);
+        errors.ShouldHaveSingleItem();
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ValidateFilter_BlankGameId_ReportsGameIdKey(string gameId)
+    {
+        var errors = RoomGameInfoValidator.ValidateFilter(new RoomListFilter(gameId));
+
+        errors.ShouldContainKey(RoomGameInfoValidator.GameIdKey);
+    }
+
+    [Fact]
+    public void ValidateFilter_TooLongGameId_ReportsGameIdKey()
+    {
+        var gameId = new string('a', RoomGameInfoLimits.MaxIdLength + 1);
+
+        var errors = RoomGameInfoValidator.ValidateFilter(new RoomListFilter(gameId));
+
+        errors.ShouldContainKey(RoomGameInfoValidator.GameIdKey);
+    }
+
+    [Theory]
+    [InlineData("not a valid id")]
+    [InlineData("game/1")]
+    [InlineData("игра")]
+    public void ValidateFilter_GameIdWithUnsupportedCharacters_ReportsGameIdKey(string gameId)
+    {
+        var errors = RoomGameInfoValidator.ValidateFilter(new RoomListFilter(gameId));
+
+        errors.ShouldContainKey(RoomGameInfoValidator.GameIdKey);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    public void ValidateFilter_BlankVersion_ReportsVersionKey(string version)
+    {
+        var errors = RoomGameInfoValidator.ValidateFilter(
+            new RoomListFilter("MakaMek", version));
+
+        errors.ShouldContainKey(RoomGameInfoValidator.FilterVersionKey);
+    }
+
+    [Fact]
+    public void ValidateFilter_TooLongVersion_ReportsVersionKey()
+    {
+        var version = new string('v', RoomGameInfoLimits.MaxVersionLength + 1);
+
+        var errors = RoomGameInfoValidator.ValidateFilter(
+            new RoomListFilter("MakaMek", version));
+
+        errors.ShouldContainKey(RoomGameInfoValidator.FilterVersionKey);
+    }
+
+    [Theory]
+    [InlineData(" v0.64.0")]
+    [InlineData("v0.64.0 ")]
+    public void ValidateFilter_VersionWithSurroundingWhitespace_ReportsVersionKey(string version)
+    {
+        var errors = RoomGameInfoValidator.ValidateFilter(
+            new RoomListFilter("MakaMek", version));
+
+        errors.ShouldContainKey(RoomGameInfoValidator.FilterVersionKey);
+    }
+
+    [Fact]
+    public void ValidateFilter_TooManyMetadataEntries_ReportsMetadataKey()
+    {
+        var metadata = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (var i = 0; i <= RoomGameInfoLimits.MaxMetadataEntries; i++)
+        {
+            metadata[$"key{i}"] = "value";
+        }
+
+        var errors = RoomGameInfoValidator.ValidateFilter(
+            new RoomListFilter("MakaMek", Metadata: metadata));
+
+        errors.ShouldContainKey(RoomGameInfoValidator.MetadataKey);
+    }
+
+    [Fact]
+    public void ValidateFilter_TooLongMetadataKey_ReportsFieldKeyedError()
+    {
+        var metadata = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [new string('k', RoomGameInfoLimits.MaxMetadataKeyLength + 1)] = "value"
+        };
+
+        var errors = RoomGameInfoValidator.ValidateFilter(
+            new RoomListFilter("MakaMek", Metadata: metadata));
+
+        errors.ShouldContainKey($"metadata[{metadata.Keys.Single()}]");
+    }
+
+    [Fact]
+    public void ValidateFilter_TooLongMetadataValue_ReportsFieldKeyedError()
+    {
+        var metadata = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["rules"] = new string('v', RoomGameInfoLimits.MaxMetadataValueLength + 1)
+        };
+
+        var errors = RoomGameInfoValidator.ValidateFilter(
+            new RoomListFilter("MakaMek", Metadata: metadata));
+
+        errors.ShouldContainKey("metadata[rules]");
+    }
+
+    [Fact]
+    public void ValidateFilter_NullMetadataValue_ReportsFieldKeyedError()
+    {
+        var metadata = new Dictionary<string, string>(StringComparer.Ordinal) { ["rules"] = null! };
+
+        var errors = RoomGameInfoValidator.ValidateFilter(
+            new RoomListFilter("MakaMek", Metadata: metadata));
+
+        errors.ShouldContainKey("metadata[rules]");
+    }
+
+    [Fact]
+    public void ValidateFilter_ReportsEveryInvalidFieldAtOnce()
+    {
+        var metadata = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["rules"] = new string('v', RoomGameInfoLimits.MaxMetadataValueLength + 1)
+        };
+        var filter = new RoomListFilter(
+            "not a valid id",
+            new string('v', RoomGameInfoLimits.MaxVersionLength + 1),
+            metadata);
+
+        var errors = RoomGameInfoValidator.ValidateFilter(filter);
+
+        errors.Keys.ShouldBe(
+        [
+            RoomGameInfoValidator.GameIdKey,
+            RoomGameInfoValidator.FilterVersionKey,
+            "metadata[rules]"
+        ], ignoreOrder: true);
+    }
 }

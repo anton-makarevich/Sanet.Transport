@@ -1562,6 +1562,187 @@ public class RelayRoomClientTests
             () => _sut.GetRelayTicket("ABCDEF", SessionToken, cts.Token));
     }
 
+    private static readonly string ListRoomsResponseSuccess = """
+        {
+          "rooms": [
+            {
+              "roomCode": "ABCDEF",
+              "createdAt": "2026-07-30T20:00:00Z",
+              "memberCount": 2,
+              "gameInfo": {
+                "hostId": "11111111-1111-1111-1111-111111111111",
+                "id": "MakaMek",
+                "version": "v0.64.0",
+                "metadata": {
+                  "techLevel": "introductory",
+                  "map.name": "forest"
+                }
+              }
+            }
+          ]
+        }
+        """;
+
+    [Fact]
+    public async Task ListRooms_Success_DecodesRoomsAPlayerCanJoinAndPreservesMetadataKeyCasing()
+    {
+        _handler.StatusCode = HttpStatusCode.OK;
+        _handler.ResponseContent = ListRoomsResponseSuccess;
+
+        var result = await _sut.ListRooms(new RoomListFilter("MakaMek"));
+
+        result.Success.ShouldBeTrue();
+        result.Error.ShouldBeNull();
+        result.Rooms.Count.ShouldBe(1);
+        var summary = result.Rooms[0];
+        summary.RoomCode.ShouldBe("ABCDEF");
+        summary.MemberCount.ShouldBe(2);
+        summary.GameInfo.ShouldNotBeNull();
+        summary.GameInfo.HostId.ShouldBe(HostId);
+        summary.GameInfo.Id.ShouldBe("MakaMek");
+        summary.GameInfo.Version.ShouldBe("v0.64.0");
+        summary.GameInfo.Metadata.ShouldNotBeNull();
+        summary.GameInfo.Metadata!["techLevel"].ShouldBe("introductory");
+        summary.GameInfo.Metadata["map.name"].ShouldBe("forest");
+    }
+
+    [Fact]
+    public async Task ListRooms_SendsGetWithEscapedQueryApiKeyAndNoSessionToken()
+    {
+        _handler.ResponseContent = ListRoomsResponseSuccess;
+
+        await _sut.ListRooms(new RoomListFilter(
+            "MakaMek",
+            "v0.64.0",
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["map name"] = "forest&ruins"
+            }));
+
+        _handler.LastRequest.ShouldNotBeNull();
+        _handler.LastRequest!.Method.ShouldBe(HttpMethod.Get);
+        _handler.LastRequest.RequestUri!.ToString().ShouldStartWith($"{BaseUrl}/api/rooms?");
+        var decodedQuery = Uri.UnescapeDataString(_handler.LastRequest.RequestUri.Query);
+        decodedQuery.ShouldContain("gameId=MakaMek");
+        decodedQuery.ShouldContain("version=v0.64.0");
+        decodedQuery.ShouldContain("metadata[map name]=forest&ruins");
+        _handler.LastRequest.Headers.GetValues("X-Api-Key").Single().ShouldBe(ApiKey);
+        _handler.LastRequest.Headers.Contains("Session-Token").ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ListRooms_EmptyList_ReturnsSuccessWithNoRooms()
+    {
+        _handler.StatusCode = HttpStatusCode.OK;
+        _handler.ResponseContent = """{ "rooms": [] }""";
+
+        var result = await _sut.ListRooms(new RoomListFilter("MakaMek"));
+
+        result.Success.ShouldBeTrue();
+        result.Error.ShouldBeNull();
+        result.Rooms.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ListRooms_WithoutPinnedOptions_UsesActiveConfiguration()
+    {
+        _handler.ResponseContent = ListRoomsResponseSuccess;
+
+        await _sut.ListRooms(new RoomListFilter("MakaMek"));
+
+        _handler.LastRequest!.RequestUri!.ToString()
+            .ShouldStartWith($"{BaseUrl}/api/rooms");
+        _handler.LastRequest.Headers.GetValues("X-Api-Key").Single().ShouldBe(ApiKey);
+    }
+
+    [Fact]
+    public async Task ListRooms_WhenOptionsProvided_UsesPinnedOptionsWithoutConsultingProvider()
+    {
+        var provider = Substitute.For<IRelayHubConfigurationProvider>();
+        var client = new RelayRoomClient(new HttpClient(_handler), provider, _logger);
+        _handler.ResponseContent = ListRoomsResponseSuccess;
+
+        var result = await client.ListRooms(
+            new RoomListFilter("MakaMek"),
+            options: new RelayClientOptions
+            {
+                BaseUrl = "https://pinned.example",
+                ApiKey = "pinned-key"
+            });
+
+        result.Success.ShouldBeTrue();
+        _handler.LastRequest!.RequestUri!.ToString()
+            .ShouldBe("https://pinned.example/api/rooms?gameId=MakaMek");
+        _handler.LastRequest.Headers.GetValues("X-Api-Key").Single().ShouldBe("pinned-key");
+        await provider.DidNotReceive().GetActiveOptions();
+    }
+
+    [Fact]
+    public async Task ListRooms_ValidationError_MapsToValidationError()
+    {
+        _handler.StatusCode = HttpStatusCode.BadRequest;
+        _handler.ResponseContent = """{ "title": "One or more validation errors occurred." }""";
+
+        var result = await _sut.ListRooms(new RoomListFilter("not a valid id"));
+
+        result.Success.ShouldBeFalse();
+        result.Rooms.ShouldBeEmpty();
+        result.Error.ShouldNotBeNull();
+        result.Error!.Code.ShouldBe(RelayClientErrorCode.ValidationError);
+    }
+
+    [Fact]
+    public async Task ListRooms_Unauthorized_MapsToUnauthorized()
+    {
+        _handler.StatusCode = HttpStatusCode.Unauthorized;
+
+        var result = await _sut.ListRooms(new RoomListFilter("MakaMek"));
+
+        result.Success.ShouldBeFalse();
+        result.Rooms.ShouldBeEmpty();
+        result.Error.ShouldNotBeNull();
+        result.Error!.Code.ShouldBe(RelayClientErrorCode.Unauthorized);
+        AssertNoSecretsLeaked(result.Error.Message);
+    }
+
+    [Fact]
+    public async Task ListRooms_MalformedJson_ReturnsDeserializationError()
+    {
+        _handler.StatusCode = HttpStatusCode.OK;
+        _handler.ContentType = "application/json";
+        _handler.ResponseContent = "not json";
+
+        var result = await _sut.ListRooms(new RoomListFilter("MakaMek"));
+
+        result.Success.ShouldBeFalse();
+        result.Rooms.ShouldBeEmpty();
+        result.Error.ShouldNotBeNull();
+        result.Error!.Code.ShouldBe(RelayClientErrorCode.DeserializationError);
+    }
+
+    [Fact]
+    public async Task ListRooms_NetworkFailure_ReturnsError()
+    {
+        _handler.ThrowException = new HttpRequestException("connection refused");
+
+        var result = await _sut.ListRooms(new RoomListFilter("MakaMek"));
+
+        result.Success.ShouldBeFalse();
+        result.Error.ShouldNotBeNull();
+        result.Error!.Code.ShouldBe(RelayClientErrorCode.NetworkError);
+        AssertNoSecretsLeaked(result.Error.Message);
+    }
+
+    [Fact]
+    public async Task ListRooms_OperationCanceled_Rethrows()
+    {
+        var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Should.ThrowAsync<OperationCanceledException>(
+            () => _sut.ListRooms(new RoomListFilter("MakaMek"), cts.Token));
+    }
+
     private void AssertNoSecretsLeaked(string? errorMessage)
     {
         if (errorMessage is not null)

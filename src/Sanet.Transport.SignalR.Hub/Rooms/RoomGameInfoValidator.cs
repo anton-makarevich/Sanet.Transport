@@ -28,6 +28,119 @@ public static partial class RoomGameInfoValidator
     [GeneratedRegex(@"\A[A-Za-z0-9._-]+\z", RegexOptions.CultureInvariant)]
     private static partial Regex GameIdPattern();
 
+    /// <summary>Field key of the game title filter in a room-list request.</summary>
+    public const string GameIdKey = "gameId";
+
+    /// <summary>Field key of the game version filter in a room-list request.</summary>
+    public const string FilterVersionKey = "version";
+
+    /// <summary>
+    /// Validates a room-list filter against <see cref="RoomGameInfoLimits"/> and returns every
+    /// field error keyed by its query-parameter path. An empty dictionary means the filter is
+    /// valid.
+    /// </summary>
+    /// <param name="filter">Filter supplied with the list request; may be null.</param>
+    public static Dictionary<string, string[]> ValidateFilter(RoomListFilter? filter)
+    {
+        var errors = new Dictionary<string, string[]>();
+
+        if (filter is null)
+        {
+            errors[GameIdKey] = ["gameId is required."];
+            return errors;
+        }
+
+        if (string.IsNullOrWhiteSpace(filter.GameId))
+        {
+            errors[GameIdKey] = ["gameId is required."];
+        }
+        else if (filter.GameId.Length > RoomGameInfoLimits.MaxIdLength)
+        {
+            errors[GameIdKey] =
+                [$"gameId must be at most {RoomGameInfoLimits.MaxIdLength} characters long."];
+        }
+        else if (!GameIdPattern().IsMatch(filter.GameId))
+        {
+            errors[GameIdKey] = ["gameId must contain only letters, digits, '.', '_' and '-'."];
+        }
+
+        if (filter.Version is { } version
+            && !string.IsNullOrWhiteSpace(version))
+        {
+            ValidateVersionValue(version, errors);
+        }
+        else if (filter.Version is not null)
+        {
+            errors[FilterVersionKey] = ["version must not be blank."];
+        }
+
+        ValidateFilterMetadata(filter.Metadata, errors);
+
+        return errors;
+    }
+
+    private static void ValidateVersionValue(string version, Dictionary<string, string[]> errors)
+    {
+        if (version.Length > RoomGameInfoLimits.MaxVersionLength)
+        {
+            errors[FilterVersionKey] =
+                [$"version must be at most {RoomGameInfoLimits.MaxVersionLength} characters long."];
+        }
+        else if (!string.Equals(version, version.Trim(), StringComparison.Ordinal)
+                 || version.Any(char.IsControl))
+        {
+            errors[FilterVersionKey] =
+                ["version must not have leading or trailing whitespace or control characters."];
+        }
+    }
+
+    private static void ValidateFilterMetadata(
+        IReadOnlyDictionary<string, string>? metadata,
+        Dictionary<string, string[]> errors)
+    {
+        if (metadata is null)
+        {
+            return;
+        }
+
+        if (metadata.Count > RoomGameInfoLimits.MaxMetadataEntries)
+        {
+            errors[MetadataKey] =
+                [$"metadata must contain at most {RoomGameInfoLimits.MaxMetadataEntries} entries."];
+            return;
+        }
+
+        foreach (var (key, value) in metadata)
+        {
+            var entryErrors = new List<string>();
+
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                entryErrors.Add("Metadata keys must not be blank.");
+            }
+            else if (key.Length > RoomGameInfoLimits.MaxMetadataKeyLength)
+            {
+                entryErrors.Add(
+                    $"Metadata keys must be at most {RoomGameInfoLimits.MaxMetadataKeyLength} characters long.");
+            }
+
+            if (value is null)
+            {
+                entryErrors.Add("Metadata values must not be null.");
+            }
+            else if (value.Length > RoomGameInfoLimits.MaxMetadataValueLength)
+            {
+                entryErrors.Add(
+                    $"Metadata values must be at most {RoomGameInfoLimits.MaxMetadataValueLength} characters long.");
+            }
+
+            if (entryErrors.Count > 0)
+            {
+                errors[$"metadata[{key}]"] = [.. entryErrors];
+            }
+        }
+    }
+
     /// <summary>
     /// Validates <paramref name="gameInfo"/> against <see cref="RoomGameInfoLimits"/> and returns
     /// every field error keyed by its JSON path. An empty dictionary means the value is valid.

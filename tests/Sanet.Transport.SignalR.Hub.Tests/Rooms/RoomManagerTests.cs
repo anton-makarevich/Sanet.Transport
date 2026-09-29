@@ -1352,6 +1352,223 @@ public class RoomManagerTests
 
     #endregion
 
+    #region ListRooms tests
+
+    [Fact]
+    public void ListRooms_ReturnsRoomsAPlayerCanJoin_IncludingCreatedRooms()
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
+        manager.CreateRoom(CreateGameInfo());
+
+        var rooms = manager.ListRooms(new RoomListFilter("MakaMek"));
+
+        rooms.Count.ShouldBe(1);
+        rooms[0].RoomCode.ShouldBe("ABC234");
+        rooms[0].MemberCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public void ListRooms_ReturnsRoomsAPlayerCanJoin_IncludingActiveRooms()
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
+        var created = manager.CreateRoom(CreateGameInfo());
+        manager.MarkRoomReady("ABC234", created.Session!.Token);
+
+        var rooms = manager.ListRooms(new RoomListFilter("MakaMek"));
+
+        rooms.Count.ShouldBe(1);
+        rooms[0].RoomCode.ShouldBe("ABC234");
+    }
+
+    [Fact]
+    public void ListRooms_ReturnsRoomsAPlayerCanJoin_ExcludingLockedRooms()
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
+        var created = manager.CreateRoom(CreateGameInfo());
+        manager.MarkRoomReady("ABC234", created.Session!.Token);
+        manager.LockRoom("ABC234", created.Session!.Token);
+
+        var rooms = manager.ListRooms(new RoomListFilter("MakaMek"));
+
+        rooms.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ListRooms_ReturnsRoomsAPlayerCanJoin_ExcludingExpiredRooms()
+    {
+        var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new FixedTimeProvider(now);
+        var manager = CreateManager(
+            new SequenceRoomCodeGenerator("ABC234"),
+            timeProvider: timeProvider);
+        manager.CreateRoom(CreateGameInfo());
+
+        timeProvider.Advance(TimeSpan.FromSeconds(DefaultRoomTtlSeconds).Add(TimeSpan.FromMinutes(1)));
+
+        var rooms = manager.ListRooms(new RoomListFilter("MakaMek"));
+
+        rooms.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ListRooms_ReturnsRoomsAPlayerCanJoin_ExcludingRoomsPastDissolutionDeadline()
+    {
+        var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new FixedTimeProvider(now);
+        var manager = CreateManager(
+            new SequenceRoomCodeGenerator("ABC234"),
+            timeProvider: timeProvider);
+        var created = manager.CreateRoom(CreateGameInfo());
+        manager.MarkRoomReady("ABC234", created.Session!.Token);
+        manager.MarkRoomForDissolution("ABC234");
+
+        timeProvider.Advance(TimeSpan.FromSeconds(DefaultDissolutionGracePeriodSeconds));
+
+        var rooms = manager.ListRooms(new RoomListFilter("MakaMek"));
+
+        rooms.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ListRooms_ReturnsRoomsAPlayerCanJoin_IncludingRoomsDissolvingBeforeDeadline()
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
+        var created = manager.CreateRoom(CreateGameInfo());
+        manager.MarkRoomReady("ABC234", created.Session!.Token);
+        manager.MarkRoomForDissolution("ABC234");
+
+        var rooms = manager.ListRooms(new RoomListFilter("MakaMek"));
+
+        rooms.Count.ShouldBe(1);
+        rooms[0].RoomCode.ShouldBe("ABC234");
+    }
+
+    [Fact]
+    public void ListRooms_ReturnsRoomsAPlayerCanJoin_MatchingGameIdOnly()
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234", "DEF567"));
+        manager.CreateRoom(new RoomGameInfo(Guid.NewGuid(), "MakaMek", "v0.64.0"));
+        manager.CreateRoom(new RoomGameInfo(Guid.NewGuid(), "OtherGame", "v1.0.0"));
+
+        var rooms = manager.ListRooms(new RoomListFilter("MakaMek"));
+
+        rooms.Select(room => room.RoomCode).ShouldBe(["ABC234"]);
+    }
+
+    [Fact]
+    public void ListRooms_ReturnsRoomsAPlayerCanJoin_MatchingVersionWhenSupplied()
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234", "DEF567"));
+        manager.CreateRoom(new RoomGameInfo(Guid.NewGuid(), "MakaMek", "v0.64.0"));
+        manager.CreateRoom(new RoomGameInfo(Guid.NewGuid(), "MakaMek", "v1.0.0"));
+
+        var rooms = manager.ListRooms(new RoomListFilter("MakaMek", "v0.64.0"));
+
+        rooms.Count.ShouldBe(1);
+        rooms[0].RoomCode.ShouldBe("ABC234");
+    }
+
+    [Fact]
+    public void ListRooms_ReturnsRoomsAPlayerCanJoin_MatchingAllMetadataEntriesAndCaseSensitiveKeys()
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234", "DEF567"));
+        manager.CreateRoom(new RoomGameInfo(
+            Guid.NewGuid(),
+            "MakaMek",
+            "v0.64.0",
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["rules"] = "standard",
+                ["techLevel"] = "introductory"
+            }));
+        manager.CreateRoom(new RoomGameInfo(
+            Guid.NewGuid(),
+            "MakaMek",
+            "v0.64.0",
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["rules"] = "standard"
+            }));
+
+        var missingEntry = manager.ListRooms(new RoomListFilter(
+            "MakaMek",
+            Metadata: new Dictionary<string, string>(StringComparer.Ordinal) { ["techLevel"] = "introductory" }));
+        var caseMismatch = manager.ListRooms(new RoomListFilter(
+            "MakaMek",
+            Metadata: new Dictionary<string, string>(StringComparer.Ordinal) { ["techlevel"] = "introductory" }));
+
+        missingEntry.Count.ShouldBe(1);
+        missingEntry[0].RoomCode.ShouldBe("ABC234");
+        caseMismatch.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ListRooms_WhenNoRoomMatches_ReturnsEmptyList()
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
+        manager.CreateRoom(CreateGameInfo());
+
+        var rooms = manager.ListRooms(new RoomListFilter("NoMatch"));
+
+        rooms.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ListRooms_DoesNotExtendRoomTtl()
+    {
+        var now = new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new FixedTimeProvider(now);
+        var manager = CreateManager(
+            new SequenceRoomCodeGenerator("ABC234"),
+            timeProvider: timeProvider);
+        var created = manager.CreateRoom(CreateGameInfo());
+
+        timeProvider.Advance(TimeSpan.FromMinutes(10));
+        manager.ListRooms(new RoomListFilter("MakaMek"));
+
+        created.Room!.ExpiresAt.ShouldBe(now.AddSeconds(DefaultRoomTtlSeconds));
+        manager.ListRooms(new RoomListFilter("MakaMek")).Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public void ListRooms_MatchingRoomsAreSortedByCreatedAtThenRoomCode()
+    {
+        var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 7, 20, 12, 0, 0, TimeSpan.Zero));
+        var manager = CreateManager(
+            new SequenceRoomCodeGenerator("DEF567", "ABC234"),
+            timeProvider: timeProvider);
+        manager.CreateRoom(CreateGameInfo());
+        timeProvider.Advance(TimeSpan.FromMinutes(1));
+        manager.CreateRoom(CreateGameInfo());
+
+        var rooms = manager.ListRooms(new RoomListFilter("MakaMek"));
+
+        rooms.Select(room => room.RoomCode).ShouldBe(["DEF567", "ABC234"]);
+    }
+
+    [Fact]
+    public void ListRooms_ReturnsDetachedGameInfoAndSummary()
+    {
+        var manager = CreateManager(new SequenceRoomCodeGenerator("ABC234"));
+        var gameInfo = new RoomGameInfo(
+            Guid.NewGuid(),
+            "MakaMek",
+            "v0.64.0",
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["rules"] = "standard" });
+        manager.CreateRoom(gameInfo);
+
+        var rooms = manager.ListRooms(new RoomListFilter("MakaMek"));
+
+        rooms.Count.ShouldBe(1);
+        var summary = rooms[0];
+        summary.GameInfo.HostId.ShouldBe(gameInfo.HostId);
+        summary.GameInfo.Id.ShouldBe("MakaMek");
+        summary.GameInfo.Version.ShouldBe("v0.64.0");
+        summary.GameInfo.Metadata!["rules"].ShouldBe("standard");
+    }
+
+    #endregion
+
     private static RoomManager CreateManager(
         IRoomCodeGenerator roomCodeGenerator,
         int maxConcurrentRooms = 10,

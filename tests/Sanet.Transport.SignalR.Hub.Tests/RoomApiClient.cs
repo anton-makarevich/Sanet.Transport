@@ -29,6 +29,45 @@ internal static class RoomApiClient
     public const string DefaultGameId = "MakaMek";
     public const string DefaultGameVersion = "v0.64.0";
 
+    /// <summary>
+    /// Lists rooms a player can join (<c>GET /api/rooms</c>) with query-string filters in the
+    /// <c>metadata[key]=value</c> format. Pass null to the API key to omit the header.
+    /// </summary>
+    public static async Task<HttpResponseMessage> ListRooms(
+        HttpClient client,
+        string? gameId = DefaultGameId,
+        string? version = null,
+        IReadOnlyDictionary<string, string>? metadata = null,
+        string? apiKey = HubApplicationFactory.ApiKey)
+    {
+        var query = new List<string>();
+        if (gameId is not null)
+        {
+            query.Add($"gameId={Uri.EscapeDataString(gameId)}");
+        }
+
+        if (version is not null)
+        {
+            query.Add($"version={Uri.EscapeDataString(version)}");
+        }
+
+        if (metadata is not null)
+        {
+            foreach (var (key, value) in metadata)
+            {
+                query.Add($"metadata[{Uri.EscapeDataString(key)}]={Uri.EscapeDataString(value)}");
+            }
+        }
+
+        var path = query.Count > 0
+            ? $"/api/rooms?{string.Join("&", query)}"
+            : "/api/rooms";
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, path);
+        AddApiKey(request, apiKey);
+        return await client.SendAsync(request);
+    }
+
     public static async Task<HttpResponseMessage> CreateRoom(
         HttpClient client,
         Guid gameId,

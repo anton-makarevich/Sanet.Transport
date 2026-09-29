@@ -8,8 +8,9 @@ namespace Sanet.Transport.SignalR.Client.Relay;
 /// no player identity is sent or received.
 /// </summary>
 /// <remarks>
-/// <see cref="Create"/>, <see cref="Join"/>, <see cref="Ready"/>, <see cref="Lock"/>,
-/// <see cref="RemoveMember"/> and <see cref="GetRelayTicket"/> accept an optional
+/// <see cref="IRelayRoomClient.Create"/>, <see cref="Join"/>, <see cref="ListRooms"/>,
+/// <see cref="Ready"/>, <see cref="Lock"/>, <see cref="RemoveMember"/> and
+/// <see cref="GetRelayTicket"/> accept an optional
 /// <see cref="RelayClientOptions"/> to pin a room lifecycle to the hub it was started on.
 /// When omitted, the currently active hub configuration is resolved for each request.
 /// </remarks>
@@ -29,6 +30,16 @@ public interface IRelayRoomClient
     Task<RoomSessionResult> Join(
         string roomCode,
         string? sessionToken,
+        CancellationToken cancellationToken = default,
+        RelayClientOptions? options = null);
+
+    /// <summary>
+    /// Lists rooms a player can join matching the filter: rooms that are locked, expired, or
+    /// dissolved are excluded. Rooms still waiting for the host to mark them ready are included;
+    /// joining one before it is ready returns the <c>HostNotReady</c> error.
+    /// </summary>
+    Task<RoomListResult> ListRooms(
+        RoomListFilter filter,
         CancellationToken cancellationToken = default,
         RelayClientOptions? options = null);
 
