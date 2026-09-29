@@ -22,9 +22,9 @@ public sealed class RoomsController(
     {
         var validationErrors = new Dictionary<string, string[]>();
 
-        if (request.GameId == Guid.Empty)
+        if (request.HostGameId == Guid.Empty)
         {
-            validationErrors[nameof(request.GameId)] = ["GameId must be a non-empty GUID."];
+            validationErrors[nameof(request.HostGameId)] = ["HostGameId must be a non-empty GUID."];
         }
 
         if (validationErrors.Count > 0)
@@ -35,13 +35,13 @@ public sealed class RoomsController(
             return ValidationProblem(new ValidationProblemDetails(validationErrors));
         }
 
-        var creation = roomManager.CreateRoom(request.GameId);
+        var creation = roomManager.CreateRoom(request.HostGameId);
 
         if (creation.Outcome == RoomCreationOutcome.HubAtCapacity)
         {
             logger.LogWarning(
                 "Create-room request for game {GameId} rejected: relay at capacity",
-                request.GameId);
+                request.HostGameId);
             return StatusCode(
                 StatusCodes.Status503ServiceUnavailable,
                 new CreateRoomResponse(
@@ -62,7 +62,7 @@ public sealed class RoomsController(
 
         logger.LogInformation(
             "Create-room request for game {GameId} succeeded: room {RoomCode}",
-            request.GameId,
+            request.HostGameId,
             room.RoomCode);
 
         return Created(

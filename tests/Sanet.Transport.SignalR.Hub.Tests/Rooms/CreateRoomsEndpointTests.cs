@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Sanet.Transport.Relay.Contracts;
 using Shouldly;
 
@@ -74,7 +75,12 @@ public class CreateRoomsEndpointTests
 
         response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         var body = await response.Content.ReadAsStringAsync();
-        body.ShouldContain("GameId");
+        body.ShouldContain("HostGameId");
+        using var problem = JsonDocument.Parse(body);
+        problem.RootElement.GetProperty("errors")
+            .TryGetProperty(nameof(CreateRoomRequest.HostGameId), out var fieldErrors)
+            .ShouldBeTrue();
+        fieldErrors.GetArrayLength().ShouldBeGreaterThan(0);
     }
 
     [Theory]

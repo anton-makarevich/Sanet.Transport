@@ -35,7 +35,7 @@ public sealed class Room
     public string RoomCode { get; }
 
     /// <summary>
-    /// Id of the host's ServerGame, reported by the host when the room was created.
+    /// Id of the host's game instance, reported by the host when the room was created.
     /// This identifies the game, not a device; it is deliberately separate from
     /// <see cref="HostDeviceSessionId"/>, <see cref="_members"/>, <see cref="_sessions"/>,
     /// and <see cref="_connections"/>.

@@ -103,7 +103,7 @@ public class RelayRoomClientTests
         _handler.LastRequestBody.ShouldNotBeNull();
         using (var doc = JsonDocument.Parse(_handler.LastRequestBody!))
         {
-            doc.RootElement.GetProperty("gameId").GetGuid().ShouldBe(hostGameId);
+            doc.RootElement.GetProperty("hostGameId").GetGuid().ShouldBe(hostGameId);
         }
 
         AssertNoSecretsLeaked(result.Error?.Message);
