@@ -25,7 +25,7 @@ public static partial class RoomGameInfoValidator
     /// <summary>Field key of the game metadata inside <c>gameInfo</c>.</summary>
     public const string MetadataKey = GameInfoKey + "." + nameof(RoomGameInfo.Metadata);
 
-    [GeneratedRegex("^[A-Za-z0-9._-]+$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\A[A-Za-z0-9._-]+\z", RegexOptions.CultureInvariant)]
     private static partial Regex GameIdPattern();
 
     /// <summary>
@@ -118,7 +118,11 @@ public static partial class RoomGameInfoValidator
                     $"Metadata keys must be at most {RoomGameInfoLimits.MaxMetadataKeyLength} characters long.");
             }
 
-            if (value?.Length > RoomGameInfoLimits.MaxMetadataValueLength)
+            if (value is null)
+            {
+                metadataErrors.Add("Metadata values must not be null.");
+            }
+            else if (value.Length > RoomGameInfoLimits.MaxMetadataValueLength)
             {
                 metadataErrors.Add(
                     $"Metadata values must be at most {RoomGameInfoLimits.MaxMetadataValueLength} characters long.");

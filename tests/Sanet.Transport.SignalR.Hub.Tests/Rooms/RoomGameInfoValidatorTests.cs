@@ -62,6 +62,7 @@ public class RoomGameInfoValidatorTests
     [InlineData("game/1")]
     [InlineData("game:id")]
     [InlineData("игра")]
+    [InlineData("MakaMek\n")]
     public void Validate_IdWithUnsupportedCharacters_ReportsIdKey(string id)
     {
         var errors = RoomGameInfoValidator.Validate(new RoomGameInfo(Guid.NewGuid(), id, "v0.64.0"));
@@ -182,6 +183,17 @@ public class RoomGameInfoValidatorTests
         {
             ["rules"] = new string('v', RoomGameInfoLimits.MaxMetadataValueLength + 1)
         };
+
+        var errors = RoomGameInfoValidator.Validate(
+            new RoomGameInfo(Guid.NewGuid(), "MakaMek", "v0.64.0", metadata));
+
+        errors.ShouldContainKey(RoomGameInfoValidator.MetadataKey);
+    }
+
+    [Fact]
+    public void Validate_NullMetadataValue_ReportsMetadataKey()
+    {
+        var metadata = new Dictionary<string, string>(StringComparer.Ordinal) { ["rules"] = null! };
 
         var errors = RoomGameInfoValidator.Validate(
             new RoomGameInfo(Guid.NewGuid(), "MakaMek", "v0.64.0", metadata));
