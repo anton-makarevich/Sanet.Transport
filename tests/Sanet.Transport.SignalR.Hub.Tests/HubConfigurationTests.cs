@@ -284,7 +284,7 @@ public class HubConfigurationTests
         using var client = factory.CreateClient();
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/rooms");
-        request.Content = JsonContent.Create(new CreateRoomRequest(Guid.NewGuid()));
+        request.Content = JsonContent.Create(new CreateRoomRequest(RoomApiClient.CreateGameInfo()));
         if (apiKey is not null)
         {
             request.Headers.Add(ApiKeyAuthenticationDefaults.HeaderName, apiKey);
@@ -342,7 +342,7 @@ public class HubConfigurationTests
 
         const string suppliedApiKey = "distinctive-wrong-api-key";
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/rooms");
-        request.Content = JsonContent.Create(new CreateRoomRequest(Guid.NewGuid()));
+        request.Content = JsonContent.Create(new CreateRoomRequest(RoomApiClient.CreateGameInfo()));
         request.Headers.Add(ApiKeyAuthenticationDefaults.HeaderName, suppliedApiKey);
 
         using var response = await client.SendAsync(request);
@@ -390,7 +390,8 @@ public class HubConfigurationTests
         string? apiKey)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/rooms");
-        request.Content = JsonContent.Create(new CreateRoomRequest(gameId));
+        request.Content = JsonContent.Create(new CreateRoomRequest(
+            new RoomGameInfo(gameId, "MakaMek", "v0.64.0")));
 
         if (apiKey is not null)
         {

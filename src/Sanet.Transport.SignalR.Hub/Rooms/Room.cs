@@ -1,3 +1,6 @@
+using System.Collections.ObjectModel;
+using Sanet.Transport.Relay.Contracts;
+
 namespace Sanet.Transport.SignalR.Hub.Rooms;
 
 /// <summary>
@@ -6,6 +9,9 @@ namespace Sanet.Transport.SignalR.Hub.Rooms;
 /// </summary>
 public sealed class Room
 {
+    private static readonly IReadOnlyDictionary<string, string> EmptyMetadata =
+        new ReadOnlyDictionary<string, string>(new Dictionary<string, string>(StringComparer.Ordinal));
+
     private readonly Dictionary<Guid, RoomMember> _members;
     private readonly Dictionary<string, RoomSession> _sessions;
     private readonly Dictionary<Guid, string> _connections = new();
@@ -13,14 +19,16 @@ public sealed class Room
 
     internal Room(
         string roomCode,
-        Guid hostGameId,
+        RoomGameInfo gameInfo,
         RoomMember host,
         RoomSession hostSession,
         DateTimeOffset createdAt,
         DateTimeOffset expiresAt)
     {
+        ArgumentNullException.ThrowIfNull(gameInfo);
+
         RoomCode = roomCode;
-        HostGameId = hostGameId;
+        GameInfo = Normalize(gameInfo);
         HostDeviceSessionId = host.DeviceSessionId;
         CreatedAt = createdAt;
         LastActivityAt = createdAt;
@@ -35,12 +43,14 @@ public sealed class Room
     public string RoomCode { get; }
 
     /// <summary>
-    /// Id of the host's game instance, reported by the host when the room was created.
-    /// This identifies the game, not a device; it is deliberately separate from
-    /// <see cref="HostDeviceSessionId"/>, <see cref="_members"/>, <see cref="_sessions"/>,
-    /// and <see cref="_connections"/>.
+    /// Game identity and game-specific attributes reported by the host when the room was created.
+    /// <see cref="RoomGameInfo.HostId"/> is the host game instance id; it identifies the game,
+    /// not a device, and is deliberately separate from <see cref="HostDeviceSessionId"/>,
+    /// <see cref="_members"/>, <see cref="_sessions"/>, and <see cref="_connections"/>.
+    /// The value is fully immutable so it can be read safely after the room-manager lock is
+    /// released.
     /// </summary>
-    public Guid HostGameId { get; }
+    public RoomGameInfo GameInfo { get; }
 
     public Guid HostDeviceSessionId { get; }
 
@@ -67,6 +77,21 @@ public sealed class Room
     {
         LastActivityAt = now;
         ExpiresAt = now.Add(ttl);
+    }
+
+    /// <summary>
+    /// Copies the incoming game info into a fully detached, immutable value: a null metadata
+    /// dictionary becomes an empty one, and a supplied dictionary is copied with an ordinal
+    /// (case-sensitive) comparer so later mutations of the caller's instance cannot reach the room.
+    /// </summary>
+    private static RoomGameInfo Normalize(RoomGameInfo gameInfo)
+    {
+        var metadata = gameInfo.Metadata is null
+            ? EmptyMetadata
+            : new ReadOnlyDictionary<string, string>(gameInfo.Metadata
+                .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal));
+
+        return gameInfo with { Metadata = metadata };
     }
 
     internal bool IsHost(Guid deviceSessionId) => HostDeviceSessionId == deviceSessionId;

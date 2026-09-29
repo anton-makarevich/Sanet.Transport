@@ -29,6 +29,8 @@ public sealed class RelayRoomClient : IRelayRoomClient
         _httpClient = httpClient;
         _hubConfigurationProvider = hubConfigurationProvider;
         _logger = logger;
+        // No DictionaryKeyPolicy: room game metadata keys are host-supplied and must keep
+        // their original case so the Hub stores and filters them exactly as sent.
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -39,23 +41,26 @@ public sealed class RelayRoomClient : IRelayRoomClient
     }
 
     public async Task<RoomSessionResult> Create(
-        Guid gameId,
+        RoomGameInfo gameInfo,
         CancellationToken cancellationToken = default,
         RelayClientOptions? options = null)
     {
+        ArgumentNullException.ThrowIfNull(gameInfo);
+
         _logger.LogInformation(
-            "Creating relay room for game {GameId}",
-            gameId);
+            "Creating relay room for game {GameId} (host instance {HostGameInstanceId})",
+            gameInfo.Id,
+            gameInfo.HostId);
 
         return await ExecuteAsync(
-            ct => CreateCore(gameId, options, ct),
+            ct => CreateCore(gameInfo, options, ct),
             RoomSessionResult.Failed,
             "create room",
             cancellationToken);
     }
 
     private async Task<RoomSessionResult> CreateCore(
-        Guid gameId,
+        RoomGameInfo gameInfo,
         RelayClientOptions? options,
         CancellationToken cancellationToken)
     {
@@ -65,7 +70,7 @@ public sealed class RelayRoomClient : IRelayRoomClient
             sessionToken: null,
             options);
         request.Content = JsonContent.Create(
-            new CreateRoomRequest(gameId),
+            new CreateRoomRequest(gameInfo),
             options: _jsonOptions);
 
         using var response = await _httpClient.SendAsync(request, cancellationToken);
@@ -86,19 +91,20 @@ public sealed class RelayRoomClient : IRelayRoomClient
             && !string.IsNullOrEmpty(payload.RoomCode)
             && !string.IsNullOrEmpty(payload.SessionToken)
             && payload.DeviceSessionId is { } deviceSessionId
-            && payload.HostGameId is { } hostGameId)
+            && payload.GameInfo is { } createdGameInfo)
         {
             _logger.LogInformation(
-                "Created relay room {RoomCode} for game {GameId}",
+                "Created relay room {RoomCode} for game {GameId} (host instance {HostGameInstanceId})",
                 payload.RoomCode,
-                gameId);
+                createdGameInfo.Id,
+                createdGameInfo.HostId);
 
             return RoomSessionResult.Succeeded(
                 payload.RoomCode,
                 payload.SessionToken,
                 HostRole,
                 deviceSessionId,
-                hostGameId);
+                createdGameInfo);
         }
 
         return RoomSessionResult.Failed(MapHubError(payload.Error, response.StatusCode));
@@ -150,7 +156,7 @@ public sealed class RelayRoomClient : IRelayRoomClient
         if (response.IsSuccessStatusCode && payload.Success
                                          && !string.IsNullOrEmpty(payload.SessionToken)
                                          && !string.IsNullOrEmpty(payload.Role)
-                                         && payload is { DeviceSessionId: { } deviceSessionId, HostGameId: { } hostGameId })
+                                         && payload is { DeviceSessionId: { } deviceSessionId, GameInfo: { } joinedGameInfo })
         {
             _logger.LogInformation(
                 "Joined relay room {RoomCode} with role {Role}",
@@ -162,7 +168,7 @@ public sealed class RelayRoomClient : IRelayRoomClient
                 payload.SessionToken,
                 payload.Role,
                 deviceSessionId,
-                hostGameId);
+                joinedGameInfo);
         }
 
         return RoomSessionResult.Failed(MapHubError(payload.Error, response.StatusCode));

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
+using Sanet.Transport.Relay.Contracts;
 using Sanet.Transport.SignalR.Hub.Configuration;
 
 namespace Sanet.Transport.SignalR.Hub.Rooms;
@@ -41,11 +42,12 @@ public sealed class RoomManager : IRoomManager
         _logger = logger;
     }
 
-    public RoomCreationResult CreateRoom(Guid hostGameId)
+    public RoomCreationResult CreateRoom(RoomGameInfo gameInfo)
     {
-        if (hostGameId == Guid.Empty)
+        var validationErrors = RoomGameInfoValidator.Validate(gameInfo);
+        if (validationErrors.Count > 0)
         {
-            throw new ArgumentException("GameId must be a non-empty GUID.", nameof(hostGameId));
+            throw new ArgumentException(DescribeGameInfoErrors(validationErrors), nameof(gameInfo));
         }
 
         lock (_sync)
@@ -72,7 +74,7 @@ public sealed class RoomManager : IRoomManager
                 hostDeviceSessionId,
                 RoomRole.Host,
                 expiresAt);
-            var room = new Room(roomCode, hostGameId, host, session, now, expiresAt);
+            var room = new Room(roomCode, gameInfo, host, session, now, expiresAt);
 
             _rooms.Add(roomCode, room);
             SyncSessionIndex(room);
@@ -86,6 +88,14 @@ public sealed class RoomManager : IRoomManager
 
             return RoomCreationResult.Created(room, session, _rooms.Count);
         }
+    }
+
+    private static string DescribeGameInfoErrors(Dictionary<string, string[]> validationErrors)
+    {
+        return string.Join(
+            " ",
+            validationErrors.SelectMany(
+                entry => entry.Value.Select(message => $"{entry.Key}: {message}")));
     }
 
     public RoomJoinResult JoinRoom(string roomCode, string? sessionToken)

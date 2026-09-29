@@ -1,8 +1,10 @@
+using Sanet.Transport.Relay.Contracts;
+
 namespace Sanet.Transport.SignalR.Client.Relay;
 
 /// <summary>
 /// Typed client for the Hub REST room lifecycle (create, join, ready, lock, remove member).
-/// The Hub boundary deals in Hub-minted device session identities and the host game id;
+/// The Hub boundary deals in Hub-minted device session identities and the host game info;
 /// no player identity is sent or received.
 /// </summary>
 /// <remarks>
@@ -13,8 +15,14 @@ namespace Sanet.Transport.SignalR.Client.Relay;
 /// </remarks>
 public interface IRelayRoomClient
 {
+    /// <summary>
+    /// Creates a room for the supplied game. <paramref name="gameInfo"/> is required: its
+    /// <see cref="RoomGameInfo.HostId"/> is the host game instance id and its
+    /// <see cref="RoomGameInfo.Id"/> is the game title. The Hub validates the remaining rules
+    /// and rejects the request when they are violated.
+    /// </summary>
     Task<RoomSessionResult> Create(
-        Guid gameId,
+        RoomGameInfo gameInfo,
         CancellationToken cancellationToken = default,
         RelayClientOptions? options = null);
 

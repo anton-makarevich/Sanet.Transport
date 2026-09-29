@@ -298,7 +298,7 @@ public class RelayLifecycleTests
     private static async Task<ReadyRoom> CreateReadyRoomAsync(HttpClient client)
     {
         using var createRequest = new HttpRequestMessage(HttpMethod.Post, "/api/rooms");
-        createRequest.Content = JsonContent.Create(new CreateRoomRequest(Guid.NewGuid()));
+        createRequest.Content = JsonContent.Create(new CreateRoomRequest(RoomApiClient.CreateGameInfo()));
         createRequest.Headers.Add(ApiKeyAuthenticationDefaults.HeaderName, HubApplicationFactory.ApiKey);
         using var createResponse = await client.SendAsync(createRequest);
         createResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
@@ -314,7 +314,7 @@ public class RelayLifecycleTests
         var hostTicket = await RoomApiClient.RequestRelayTicket(client, created.RoomCode!, created.SessionToken!);
 
         return new ReadyRoom(
-            created.RoomCode!, created.SessionToken!, created.DeviceSessionId!.Value, hostTicket);
+            created.RoomCode!, hostTicket);
     }
 
     private static async Task<JoinedSession> JoinRoomAsync(HttpClient client, string roomCode, string? sessionToken)
@@ -334,7 +334,7 @@ public class RelayLifecycleTests
 
         var relayTicket = await RoomApiClient.RequestRelayTicket(client, roomCode, joined.SessionToken);
 
-        return new JoinedSession(joined.SessionToken, joined.DeviceSessionId.Value, relayTicket);
+        return new JoinedSession(joined.DeviceSessionId.Value, relayTicket);
     }
 
 
@@ -375,9 +375,9 @@ public class RelayLifecycleTests
         succeeded.ShouldBeTrue();
     }
 
-    private sealed record ReadyRoom(string RoomCode, string HostToken, Guid HostDeviceSessionId, string HostTicket);
+    private sealed record ReadyRoom(string RoomCode, string HostTicket);
 
-    private sealed record JoinedSession(string SessionToken, Guid DeviceSessionId, string RelayTicket);
+    private sealed record JoinedSession(Guid DeviceSessionId, string RelayTicket);
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
