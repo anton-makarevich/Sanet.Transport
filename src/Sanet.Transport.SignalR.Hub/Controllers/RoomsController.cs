@@ -24,7 +24,7 @@ public sealed class RoomsController(
 
         if (request.HostGameId == Guid.Empty)
         {
-            validationErrors[nameof(request.HostGameId)] = ["GameId must be a non-empty GUID."];
+            validationErrors[nameof(request.HostGameId)] = ["HostGameId must be a non-empty GUID."];
         }
 
         if (validationErrors.Count > 0)
