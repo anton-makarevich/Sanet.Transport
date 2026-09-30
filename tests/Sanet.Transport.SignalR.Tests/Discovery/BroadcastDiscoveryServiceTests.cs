@@ -39,6 +39,10 @@ public class BroadcastDiscoveryServiceTests
         _broadcastDiscoveryService = new BroadcastDiscoveryService(_mockFactory, TestPort);
     }
 
+    private int SendCount() =>
+        _mockSenderClient.ReceivedCalls()
+            .Count(c => c.GetMethodInfo().Name == nameof(IUdpClientWrapper.SendAsync));
+
     [Fact]
     public void Constructor_WithDefaultFactory_DoesNotThrow()
     {
@@ -59,7 +63,7 @@ public class BroadcastDiscoveryServiceTests
         var ex = Should.Throw<ArgumentNullException>(act); 
         ex.ParamName.ShouldBe("udpClientFactory");
     }
-
+ 
     [Fact]
     public async Task BroadcastPresence_SendsToBroadcastEndpointPeriodically()
     {
@@ -69,13 +73,15 @@ public class BroadcastDiscoveryServiceTests
 
         // Act
         _broadcastDiscoveryService.BroadcastPresence(hubUrl);
-        await Task.Delay(100); // Allow time for the first broadcast task to start and send
+        // The broadcast loop runs on a background task, so wait for the send to be
+        // observed instead of assuming a fixed delay is long enough.
+        await WaitForAsync(() => SendCount() >= 1);
 
         // Assert
         await _mockSenderClient.Received(1).SendAsync(Arg.Any<byte[]>(), expectedData.Length, _expectedBroadcastEndpoint);
 
-        // Act again: Wait for potential second broadcast
-        await Task.Delay(5100); // Wait longer than the 5s interval
+        // Act again: Wait for the periodic (5s interval) second broadcast
+        await WaitForAsync(() => SendCount() >= 2, 10000);
 
         // Assert again: Check if sent at least twice
         await _mockSenderClient.Received(2).SendAsync(Arg.Any<byte[]>(), expectedData.Length, _expectedBroadcastEndpoint);
