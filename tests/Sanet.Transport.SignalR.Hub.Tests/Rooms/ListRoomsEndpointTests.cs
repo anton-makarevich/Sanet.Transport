@@ -198,6 +198,43 @@ public class ListRoomsEndpointTests
     }
 
     [Fact]
+    public async Task ListRooms_WithCaseDistinctMetadataFilterKeys_AppliesBothFilters()
+    {
+        await using var factory = new HubApplicationFactory();
+        using var client = factory.CreateClient();
+        using var bothKeysCreated = await RoomApiClient.CreateRoom(client, new RoomGameInfo(
+            Guid.NewGuid(),
+            RoomApiClient.DefaultGameId,
+            RoomApiClient.DefaultGameVersion,
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["Rules"] = "standard",
+                ["rules"] = "beta"
+            }));
+        bothKeysCreated.StatusCode.ShouldBe(HttpStatusCode.Created);
+
+        await RoomApiClient.CreateRoom(client, new RoomGameInfo(
+            Guid.NewGuid(),
+            RoomApiClient.DefaultGameId,
+            RoomApiClient.DefaultGameVersion,
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["Rules"] = "standard" }));
+
+        using var response = await RoomApiClient.ListRooms(
+            client,
+            metadata: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["Rules"] = "standard",
+                ["rules"] = "beta"
+            });
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<ListRoomsResponse>(RoomApiClient.JsonOptions);
+        result!.Rooms.Count.ShouldBe(1);
+        result.Rooms[0].RoomCode.ShouldBe(
+            (await bothKeysCreated.Content.ReadFromJsonAsync<CreateRoomResponse>(RoomApiClient.JsonOptions))!.RoomCode);
+    }
+
+    [Fact]
     public async Task ListRooms_ResponseCarriesNoSessionOrDeviceSessionData()
     {
         await using var factory = new HubApplicationFactory();

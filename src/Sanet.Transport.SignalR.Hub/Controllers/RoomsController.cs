@@ -92,7 +92,7 @@ public sealed class RoomsController(
                 }));
         }
 
-        var metadata = CollectMetadataFilters(Request.Query);
+        var metadata = CollectMetadataFilters(Request.QueryString.Value);
         var filter = new RoomListFilter(gameId, version, metadata);
         var validationErrors = RoomGameInfoValidator.ValidateFilter(filter);
 
@@ -116,27 +116,51 @@ public sealed class RoomsController(
 
     /// <summary>
     /// Collects <c>metadata[key]=value</c> query parameters in order of first appearance.
-    /// The <c>metadata</c> prefix is parsed manually because the query-string dictionary
-    /// binder would swallow unrelated parameters as dictionary entries.
+    /// The raw query string is parsed manually for two reasons: the query-string dictionary
+    /// binder would swallow unrelated parameters as dictionary entries, and
+    /// <see cref="IQueryCollection"/> compares keys case-insensitively, which would merge the
+    /// ordinal-distinct filters <c>metadata[Rules]</c> and <c>metadata[rules]</c> into one.
     /// </summary>
-    private static Dictionary<string, string> CollectMetadataFilters(IQueryCollection query)
+    private static Dictionary<string, string> CollectMetadataFilters(string? rawQuery)
     {
         var metadata = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        foreach (var (key, value) in query)
+        if (string.IsNullOrEmpty(rawQuery))
         {
+            return metadata;
+        }
+
+        foreach (var pair in rawQuery.TrimStart('?').Split('&'))
+        {
+            if (pair.Length == 0)
+            {
+                continue;
+            }
+
+            var separatorIndex = pair.IndexOf('=');
+            var key = UrlDecode(separatorIndex < 0 ? pair : pair[..separatorIndex]);
+
             if (!key.StartsWith("metadata[", StringComparison.Ordinal)
                 || !key.EndsWith("]", StringComparison.Ordinal))
             {
                 continue;
             }
 
-            var name = key["metadata[".Length..^1];
-            metadata[name] = value.ToString();
+            var value = separatorIndex < 0
+                ? string.Empty
+                : UrlDecode(pair[(separatorIndex + 1)..]);
+            metadata[key["metadata[".Length..^1]] = value;
         }
 
         return metadata;
     }
+
+    /// <summary>
+    /// Decodes a query-string component the way the framework query parser does: <c>+</c> becomes
+    /// a space before percent-decoding.
+    /// </summary>
+    private static string UrlDecode(string component) =>
+        Uri.UnescapeDataString(component.Replace('+', ' '));
 
     [HttpPost("{roomCode}/join")]
     [EnableRateLimiting("JoinRateLimit")]
