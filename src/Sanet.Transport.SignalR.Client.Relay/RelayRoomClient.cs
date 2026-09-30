@@ -214,7 +214,7 @@ public sealed class RelayRoomClient : IRelayRoomClient
         }
 
         var payload = DeserializeOrNull<ListRoomsResponse>(body);
-        if (payload is null)
+        if (payload?.Rooms is null)
         {
             return RoomListResult.Failed(DeserializationError());
         }

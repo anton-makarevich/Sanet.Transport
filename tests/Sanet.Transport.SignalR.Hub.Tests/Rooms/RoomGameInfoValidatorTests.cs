@@ -330,7 +330,7 @@ public class RoomGameInfoValidatorTests
         var errors = RoomGameInfoValidator.ValidateFilter(
             new RoomListFilter("MakaMek", Metadata: metadata));
 
-        errors.ShouldContainKey(RoomGameInfoValidator.MetadataKey);
+        errors.ShouldContainKey(RoomGameInfoValidator.FilterMetadataKey);
     }
 
     [Fact]

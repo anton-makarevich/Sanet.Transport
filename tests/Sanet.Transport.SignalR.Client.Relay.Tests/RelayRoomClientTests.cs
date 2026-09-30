@@ -1721,6 +1721,21 @@ public class RelayRoomClientTests
     }
 
     [Fact]
+    public async Task ListRooms_NullRooms_ReturnsDeserializationError()
+    {
+        _handler.StatusCode = HttpStatusCode.OK;
+        _handler.ContentType = "application/json";
+        _handler.ResponseContent = """{ "rooms": null }""";
+
+        var result = await _sut.ListRooms(new RoomListFilter("MakaMek"));
+
+        result.Success.ShouldBeFalse();
+        result.Rooms.ShouldBeEmpty();
+        result.Error.ShouldNotBeNull();
+        result.Error!.Code.ShouldBe(RelayClientErrorCode.DeserializationError);
+    }
+
+    [Fact]
     public async Task ListRooms_NetworkFailure_ReturnsError()
     {
         _handler.ThrowException = new HttpRequestException("connection refused");

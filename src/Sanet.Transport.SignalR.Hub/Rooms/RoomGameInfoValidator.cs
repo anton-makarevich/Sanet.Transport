@@ -34,6 +34,9 @@ public static partial class RoomGameInfoValidator
     /// <summary>Field key of the game version filter in a room-list request.</summary>
     public const string FilterVersionKey = "version";
 
+    /// <summary>Field key of the game metadata filter in a room-list request.</summary>
+    public const string FilterMetadataKey = "metadata";
+
     /// <summary>
     /// Validates a room-list filter against <see cref="RoomGameInfoLimits"/> and returns every
     /// field error keyed by its query-parameter path. An empty dictionary means the filter is
@@ -105,7 +108,7 @@ public static partial class RoomGameInfoValidator
 
         if (metadata.Count > RoomGameInfoLimits.MaxMetadataEntries)
         {
-            errors[MetadataKey] =
+            errors[FilterMetadataKey] =
                 [$"metadata must contain at most {RoomGameInfoLimits.MaxMetadataEntries} entries."];
             return;
         }
@@ -136,7 +139,7 @@ public static partial class RoomGameInfoValidator
 
             if (entryErrors.Count > 0)
             {
-                errors[$"metadata[{key}]"] = [.. entryErrors];
+                errors[$"{FilterMetadataKey}[{key}]"] = [.. entryErrors];
             }
         }
     }

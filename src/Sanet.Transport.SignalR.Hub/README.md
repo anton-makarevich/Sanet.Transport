@@ -125,7 +125,8 @@ routing — only the room code, creation time, member count, and the stored `gam
 An empty list is a successful `200` response, not an error. The list call never extends a room's
 expiry. The filters use the same game fields from issue #60 (`RoomGameInfo.Id`, `Version`,
 `Metadata`) and are validated against `RoomGameInfoLimits`; violations return `400` with a
-`ValidationProblemDetails` body keyed by `gameId`, `version`, or `metadata[<key>]`.
+`ValidationProblemDetails` body keyed by `gameId`, `version`, `metadata` (when the filter carries too
+many metadata entries), or `metadata[<key>]`.
 
 ## Connecting Clients
 
