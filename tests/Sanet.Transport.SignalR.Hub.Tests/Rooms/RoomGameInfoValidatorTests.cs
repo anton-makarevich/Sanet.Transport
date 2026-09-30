@@ -333,6 +333,19 @@ public class RoomGameInfoValidatorTests
         errors.ShouldContainKey(RoomGameInfoValidator.FilterMetadataKey);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ValidateFilter_BlankMetadataKey_ReportsFieldKeyedError(string key)
+    {
+        var metadata = new Dictionary<string, string>(StringComparer.Ordinal) { [key] = "value" };
+
+        var errors = RoomGameInfoValidator.ValidateFilter(
+            new RoomListFilter("MakaMek", Metadata: metadata));
+
+        errors.ShouldContainKey($"metadata[{key}]");
+    }
+
     [Fact]
     public void ValidateFilter_TooLongMetadataKey_ReportsFieldKeyedError()
     {
