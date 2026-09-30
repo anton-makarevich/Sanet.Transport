@@ -60,7 +60,7 @@ dotnet add package Sanet.Transport.SignalR.Client.Relay
 
 ## Relay Client SDK
 
-`Sanet.Transport.SignalR.Client.Relay` is the client SDK for the relay hub's room-management REST API. It provides a typed room lifecycle client (`IRelayRoomClient`) with create, join, ready, close, and remove-member operations, plus the wire DTOs, error types, and hub constants.
+`Sanet.Transport.SignalR.Client.Relay` is the client SDK for the relay hub's room-management REST API. It provides a typed room lifecycle client (`IRelayRoomClient`) with create, join, list rooms, ready, close, and remove-member operations, plus the wire DTOs, error types, and hub constants.
 
 ## SignalR Client Publishers
 

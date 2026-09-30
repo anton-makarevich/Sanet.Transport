@@ -68,6 +68,7 @@ The container listens on `http://localhost:8080` in `Production` mode.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Health check (returns status, service name, version) |
+| GET | `/api/rooms` | List rooms a player can join, filtered by game (requires `X-Api-Key` header) |
 | POST | `/api/rooms` | Create a room (requires `X-Api-Key` header) |
 | POST | `/api/rooms/{roomCode}/join` | Join a room by code (requires `X-Api-Key` header, rate-limited per IP) |
 | POST | `/api/rooms/{roomCode}/ready` | Mark a room ready to accept joiners (requires `X-Api-Key` + `Session-Token` header, host only) |
@@ -106,6 +107,26 @@ The create response carries the same `gameInfo` back, and `POST /api/rooms/{room
 as well, so a joiner learns the game before it starts connecting. A request that violates a rule is
 rejected with `400` and a `ValidationProblemDetails` body whose `errors` keys name the offending
 field, for example `GameInfo.Id`.
+
+## Listing Rooms A Player Can Join
+
+`GET /api/rooms?gameId=MakaMek` returns the snapshot of rooms a player can join. A room is listed
+while it is **not locked**, **not expired**, and **not dissolved**. This includes rooms the host has
+not marked ready yet: if a new device joins a waiting room before `/ready`, the join returns
+`409 HostNotReady`. A listed room never carries session tokens, device session ids, or connection
+routing — only the room code, creation time, member count, and the stored `gameInfo`.
+
+| Parameter | Required | Semantics |
+|-----------|----------|-----------|
+| `gameId` | yes | Matches `gameInfo.id` exactly (ordinal, case-sensitive). Same character rules as at creation. |
+| `version` | no | When supplied, matches `gameInfo.version` exactly (ordinal). Same whitespace/control-character rules as at creation. |
+| `metadata[key]` | no | Repeatable. Every supplied entry must be present in the room's `gameInfo.metadata` with an ordinal-equal value (AND semantics). Keys are case-sensitive. |
+
+An empty list is a successful `200` response, not an error. The list call never extends a room's
+expiry. The filters use the same game fields from issue #60 (`RoomGameInfo.Id`, `Version`,
+`Metadata`) and are validated against `RoomGameInfoLimits`; violations return `400` with a
+`ValidationProblemDetails` body keyed by `gameId`, `version`, `metadata` (when the filter carries too
+many metadata entries), or `metadata[<key>]`.
 
 ## Connecting Clients
 

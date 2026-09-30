@@ -90,6 +90,52 @@ public sealed class RoomManager : IRoomManager
         }
     }
 
+    public IReadOnlyList<RoomSummary> ListRooms(RoomListFilter filter)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+
+        lock (_sync)
+        {
+            var now = _timeProvider.GetUtcNow();
+            RemoveExpiredRooms(now);
+
+            var rooms = _rooms.Values
+                .Where(room => room.State != RoomState.Locked
+                               && !room.IsExpiredAt(now)
+                               && !room.IsDissolvedAt(now))
+                .Where(room => string.Equals(
+                    room.GameInfo.Id,
+                    filter.GameId,
+                    StringComparison.Ordinal))
+                .Where(room => filter.Version is null
+                               || string.Equals(
+                                   room.GameInfo.Version,
+                                   filter.Version,
+                                   StringComparison.Ordinal))
+                .Where(room => filter.Metadata is null
+                               || filter.Metadata.All(entry =>
+                                   room.GameInfo.Metadata is { } metadata
+                                   && metadata.TryGetValue(entry.Key, out var value)
+                                   && string.Equals(value, entry.Value, StringComparison.Ordinal)))
+                .Select(room => new RoomSummary(
+                    room.RoomCode,
+                    room.CreatedAt,
+                    room.Members.Count,
+                    room.GameInfo))
+                .OrderBy(summary => summary.CreatedAt)
+                .ThenBy(summary => summary.RoomCode, StringComparer.Ordinal)
+                .ToList();
+
+            _logger.LogInformation(
+                "List of rooms a player can join for game {GameId}: {MatchingRooms}/{StoredRooms} room(s)",
+                filter.GameId,
+                rooms.Count,
+                _rooms.Count);
+
+            return rooms;
+        }
+    }
+
     private static string DescribeGameInfoErrors(Dictionary<string, string[]> validationErrors)
     {
         return string.Join(
@@ -569,16 +615,17 @@ public sealed class RoomManager : IRoomManager
 
     public RelayTicketResult IssueRelayTicket(string roomCode, string sessionToken)
     {
-        if (string.IsNullOrWhiteSpace(sessionToken))
-        {
-            _logger.LogWarning(
-                "Relay-ticket request for room {RoomCode} rejected: session token missing or invalid",
-                roomCode);
-            return RelayTicketResult.SessionInvalid();
-        }
-
         lock (_sync)
         {
+            if (string.IsNullOrWhiteSpace(sessionToken))
+            {
+                _logger.LogWarning(
+                    "Relay-ticket request for room {RoomCode} rejected: session token missing or invalid",
+                    roomCode);
+                return RelayTicketResult.SessionInvalid();
+            }
+
+
             var now = _timeProvider.GetUtcNow();
 
             if (!_rooms.TryGetValue(roomCode, out var room))

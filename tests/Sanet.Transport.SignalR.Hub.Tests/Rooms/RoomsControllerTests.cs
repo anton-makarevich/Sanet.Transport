@@ -652,6 +652,61 @@ public class RoomsControllerTests
             message => message.Contains("failed: RoomNotFound", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void ListRooms_ValidRequest_ReturnsOkWithRoomsAPlayerCanJoin()
+    {
+        var room = CreateRoom();
+        _roomManager.ListRooms(Arg.Any<RoomListFilter>())
+            .Returns([new RoomSummary(room.RoomCode, room.CreatedAt, room.Members.Count, room.GameInfo)]);
+
+        var result = _sut.ListRooms("MakaMek", null);
+
+        var ok = result.Result.ShouldBeOfType<OkObjectResult>();
+        var response = ok.Value.ShouldBeOfType<ListRoomsResponse>();
+        response.Rooms.Count.ShouldBe(1);
+        response.Rooms[0].RoomCode.ShouldBe(RoomCode);
+        response.Rooms[0].MemberCount.ShouldBe(1);
+        response.Rooms[0].GameInfo.ShouldNotBeNull();
+        response.Rooms[0].GameInfo.Id.ShouldBe(GameInfo.Id);
+        response.Rooms[0].GameInfo.HostId.ShouldBe(GameInfo.HostId);
+        _roomManager.Received(1).ListRooms(
+            Arg.Is<RoomListFilter>(filter =>
+                filter.GameId == "MakaMek"
+                && filter.Version == null
+                && filter.Metadata!.Count == 0));
+    }
+
+    [Fact]
+    public void ListRooms_MissingGameId_ReturnsValidationProblem()
+    {
+        var result = _sut.ListRooms(null, null);
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+        _roomManager.DidNotReceive().ListRooms(Arg.Any<RoomListFilter>());
+    }
+
+    [Fact]
+    public void ListRooms_InvalidGameId_ReturnsValidationProblem()
+    {
+        var result = _sut.ListRooms("not a valid id", null);
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+        _roomManager.DidNotReceive().ListRooms(Arg.Any<RoomListFilter>());
+    }
+
+    [Fact]
+    public void ListRooms_BlankGameIdStillListsRoomsAPlayerCanJoin()
+    {
+        _roomManager.ListRooms(Arg.Any<RoomListFilter>())
+            .Returns([]);
+
+        var result = _sut.ListRooms("MakaMek", null);
+
+        var ok = result.Result.ShouldBeOfType<OkObjectResult>();
+        var response = ok.Value.ShouldBeOfType<ListRoomsResponse>();
+        response.Rooms.ShouldBeEmpty();
+    }
+
     private void SetSessionTokenHeader(string token)
     {
         _sut.ControllerContext.HttpContext.Request.Headers["Session-Token"] = token;
