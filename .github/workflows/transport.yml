@@ -48,9 +48,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write # OIDC token exchange, required by NuGet Trusted Publishing
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
         
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
@@ -66,10 +71,29 @@ jobs:
           dotnet pack src/Sanet.Transport.SignalR.Server/Sanet.Transport.SignalR.Server.csproj --configuration Release --output ${{ env.NuGetDirectory }}
           dotnet pack src/Sanet.Transport.SignalR.Client.Relay/Sanet.Transport.SignalR.Client.Relay.csproj --configuration Release --output ${{ env.NuGetDirectory }}
 
+      # Trusted Publishing (OIDC) instead of a long-lived API key: nuget.org
+      # exchanges this run's OIDC identity for a short-lived (~1 hour) push key,
+      # scoped by the trust policy configured for this repository + workflow on
+      # the NuGet side. No secret is involved.
+      #
+      # Deliberately the step right before the push: the exchanged key is only
+      # valid for one hour.
+      - name: NuGet login (OIDC to temporary API key)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ vars.NUGET_USER }}
+
       - name: Publish NuGet packages
         env:
-          NUGET_APIKEY: ${{ secrets.NUGET_APIKEY }}
+          NUGET_APIKEY: ${{ steps.login.outputs.NUGET_API_KEY }}
         run: |
-          for file in "${{ env.NuGetDirectory }}"/*.nupkg; do
+          shopt -s nullglob
+          packages=("${{ env.NuGetDirectory }}"/*.nupkg)
+          if [[ ${#packages[@]} -eq 0 ]]; then
+            echo "::error::No .nupkg found in ${{ env.NuGetDirectory }} - the pack step produced nothing to publish"
+            exit 1
+          fi
+          for file in "${packages[@]}"; do
             dotnet nuget push "$file" --api-key "$NUGET_APIKEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
           done
